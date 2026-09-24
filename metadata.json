@@ -1,0 +1,7 @@
+{
+  "name": "Aura Music",
+  "description": "Premium offline music player combining One UI reachability with Spotify-style fluid synced lyrics and smart mood queues.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+

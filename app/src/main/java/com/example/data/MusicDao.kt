@@ -10,6 +10,10 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface MusicDao {
 
+    // Permanent deletion query
+    @Query("DELETE FROM songs WHERE id = :songId")
+    suspend fun deleteSongById(songId: Long)
+
     // Main library query: Soft-hidden tracks are omitted from general view
     @Query("SELECT * FROM songs WHERE isHiddenFromLibrary = 0 ORDER BY title COLLATE NOCASE ASC")
     fun getLibrarySongs(): Flow<List<SongEntity>>
@@ -72,6 +76,9 @@ interface MusicDao {
     @Query("UPDATE songs SET isFavorite = :isFavorite WHERE id = :songId")
     suspend fun setFavorite(songId: Long, isFavorite: Boolean)
 
+    @Query("UPDATE songs SET coverArtUrl = :coverArtUrl, albumArtUri = :coverArtUrl WHERE id = :songId")
+    suspend fun updateCoverArt(songId: Long, coverArtUrl: String)
+
     @Query("SELECT * FROM songs WHERE isFavorite = 1 AND isHiddenFromLibrary = 0 ORDER BY title COLLATE NOCASE ASC")
     fun getFavoriteSongs(): Flow<List<SongEntity>>
 
@@ -130,4 +137,27 @@ interface MusicDao {
         WHERE ps.songId = :songId
     """)
     fun getPlaylistsForSong(songId: Long): Flow<List<PlaylistEntity>>
+
+    // Playback History Tracking (Minimum 30s listen)
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertPlaybackHistory(entry: PlaybackHistoryEntity): Long
+
+    @Query("SELECT * FROM playback_history WHERE timestamp >= :sinceTimestamp ORDER BY timestamp DESC")
+    fun getRecentPlaybackHistory(sinceTimestamp: Long): Flow<List<PlaybackHistoryEntity>>
+
+    @Query("SELECT * FROM playback_history WHERE timestamp >= :sinceTimestamp ORDER BY timestamp DESC")
+    suspend fun getRecentPlaybackHistoryDirect(sinceTimestamp: Long): List<PlaybackHistoryEntity>
+
+    // Spotify Taste Profile Affinity
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertSpotifyAffinities(affinities: List<SpotifyAffinityEntity>)
+
+    @Query("SELECT * FROM spotify_affinity ORDER BY weight DESC")
+    fun getSpotifyAffinities(): Flow<List<SpotifyAffinityEntity>>
+
+    @Query("SELECT * FROM spotify_affinity ORDER BY weight DESC")
+    suspend fun getSpotifyAffinitiesDirect(): List<SpotifyAffinityEntity>
+
+    @Query("DELETE FROM spotify_affinity")
+    suspend fun clearSpotifyAffinities()
 }

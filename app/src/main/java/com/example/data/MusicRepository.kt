@@ -46,6 +46,10 @@ class MusicRepository(
         musicDao.setSongHidden(songId, isHidden)
     }
 
+    suspend fun deleteSongPermanently(songId: Long) {
+        musicDao.deleteSongById(songId)
+    }
+
     suspend fun updateLyrics(songId: Long, lyrics: String) {
         musicDao.updateLyrics(songId, lyrics)
     }
@@ -188,6 +192,15 @@ class MusicRepository(
         return@withContext mergedSongs.size
     }
 
+    companion object {
+        val mockLyrics = listOf(
+            "Nit controversy create milugi",
+            "Dharma de naam te debate milugi",
+            "Sach bolenga taan milu 295",
+            "Je karenga tarakki putt hate milugi"
+        )
+    }
+
     private fun seedDemonstrationSongs(): List<SongEntity> {
         return listOf(
             SongEntity(
@@ -195,7 +208,7 @@ class MusicRepository(
                 title = "295",
                 artist = "Sidhu Moose Wala",
                 album = "Moosetape",
-                durationMs = 270_000L,
+                durationMs = 60_000L,
                 contentUri = "android.resource://${context.packageName}/raw/demo_track_1",
                 albumArtUri = null,
                 languageScript = "PUNJABI",
@@ -203,12 +216,12 @@ class MusicRepository(
                 moodScore = 0.92f,
                 lrcLyrics = """
                     [00:00.00]♪ Bass & Dhol Intro ♪
-                    [00:06.50]Tell me who can block the path ahead
-                    [00:14.20]Standing tall through every controversy
-                    [00:22.00]When you speak truth, they press 295
-                    [00:30.80]Crowds follow like storming winds
-                    [00:38.00]The voice of truth echoes forever
-                    [00:46.50]Sidhu's legacy shines forever
+                    [00:06.50]Nit controversy create milugi
+                    [00:14.20]Dharma de naam te debate milugi
+                    [00:22.00]Sach bolenga taan milu 295
+                    [00:30.80]Je karenga tarakki putt hate milugi
+                    [00:38.00]Nit controversy create milugi
+                    [00:46.50]Sach bolenga taan milu 295
                 """.trimIndent()
             ),
             SongEntity(
@@ -216,7 +229,7 @@ class MusicRepository(
                 title = "Kesariya",
                 artist = "Arijit Singh",
                 album = "Brahmastra Classics",
-                durationMs = 268_000L,
+                durationMs = 60_000L,
                 contentUri = "android.resource://${context.packageName}/raw/demo_track_2",
                 albumArtUri = null,
                 languageScript = "HINDI_MARATHI",
@@ -224,11 +237,11 @@ class MusicRepository(
                 moodScore = 0.48f,
                 lrcLyrics = """
                     [00:00.00]♪ Acoustic Guitar Arpeggio ♪
-                    [00:07.00]Tell me how someone could not fall for you
-                    [00:15.50]God spent all treasures of beauty making you
-                    [00:24.00]Your love is saffron, my beloved
-                    [00:32.40]I am dyed the moment I touch it
-                    [00:40.00]Spending days dreaming and nights praying for you
+                    [00:07.00]Mujhko itna bataaye koyi, kaise tujhpe fida na ho koyi
+                    [00:15.50]Rab ne banaya tujhe karke fursat se taiyyar
+                    [00:24.00]Kesariya tera ishq hai piya
+                    [00:32.40]Rang jaaun jo main haath lagaun
+                    [00:40.00]Din beete saare teri fikr mein, rain saari tere zikr mein
                     [00:48.00]♪ Flute & Strings Interlude ♪
                 """.trimIndent()
             ),
@@ -237,7 +250,7 @@ class MusicRepository(
                 title = "Deva Shree Ganesha",
                 artist = "Ajay-Atul",
                 album = "Agneepath",
-                durationMs = 336_000L,
+                durationMs = 60_000L,
                 contentUri = "android.resource://${context.packageName}/raw/demo_track_3",
                 albumArtUri = null,
                 languageScript = "HINDI_MARATHI",
@@ -245,10 +258,10 @@ class MusicRepository(
                 moodScore = 0.95f,
                 lrcLyrics = """
                     [00:00.00]♪ Shankh Naad & Powerful Dhol-Tasha ♪
-                    [00:10.00]Deva Shree Ganesha, Deva Shree Ganesha!
-                    [00:20.50]In the eyes of the devoted burns divine fire
+                    [00:10.00]Deva shree Ganesha, deva shree Ganesha!
+                    [00:20.50]Jwala si jalti hai aankhon mein jiske bhi
                     [00:31.00]Ganpati Bappa Morya! Mangal Murti Morya!
-                    [00:42.00]With divine strength every chain is broken
+                    [00:42.00]Tod deta hai har bandhan re deva
                     [00:54.00]♪ Climax Percussion Roll ♪
                 """.trimIndent()
             ),
@@ -257,7 +270,7 @@ class MusicRepository(
                 title = "Excuses",
                 artist = "AP Dhillon, Gurinder Gill",
                 album = "Hidden Gems",
-                durationMs = 176_000L,
+                durationMs = 60_000L,
                 contentUri = "android.resource://${context.packageName}/raw/demo_track_4",
                 albumArtUri = null,
                 languageScript = "PUNJABI",
@@ -265,30 +278,99 @@ class MusicRepository(
                 moodScore = 0.72f,
                 lrcLyrics = """
                     [00:00.00]♪ Synth Wave Groove ♪
-                    [00:08.00]No need to say a word, you know my heart
-                    [00:15.50]Let me tell you something, girl
-                    [00:23.00]When our eyes met, we talked all through the night
-                    [00:31.20]Brown Munde vibes in the city night
+                    [00:08.00]Kehndi hundi si chan tak raah bana de
+                    [00:15.50]Taare ne pasand mainu hethaan saare laa de
+                    [00:23.00]Ohna taareyan de vich jad mainu vekhegi
+                    [00:31.20]Yaad meri aavegi taan dil tera vi lagna nahi
                     [00:39.00]♪ Smooth Bass Drop ♪
                 """.trimIndent()
             ),
             SongEntity(
                 id = 1005L,
-                title = "Sham Savere",
-                artist = "Aura Acoustics",
-                album = "Monsoon Reverie",
-                durationMs = 210_000L,
+                title = "Tujhe Dekha Toh",
+                artist = "Kumar Sanu, Lata Mangeshkar",
+                album = "Dilwale Dulhania Le Jayenge 90s",
+                durationMs = 60_000L,
                 contentUri = "android.resource://${context.packageName}/raw/demo_track_5",
                 albumArtUri = null,
-                languageScript = "HINDI_MARATHI",
-                moodProfile = "CALM",
-                moodScore = 0.18f,
+                languageScript = "HINDI",
+                genre = "90s Hindi",
+                moodProfile = "CHILL",
+                moodScore = 0.55f,
                 lrcLyrics = """
-                    [00:00.00]♪ Gentle Rain Sounds & Rhodes Piano ♪
-                    [00:12.00]Morning and evening, your memories linger
-                    [00:25.00]The gentle winds whisper a sweet melody
-                    [00:38.00]Heart full of peace, surrounded by calm
-                    [00:52.00]♪ Soft Acoustic Vinyl Crackle ♪
+                    [00:00.00]♪ Mandolin & Accordion Intro ♪
+                    [00:08.00]Tujhe dekha toh yeh jaana sanam
+                    [00:16.00]Pyaar hota hai deewana sanam
+                    [00:24.00]Ab yahan se kahan jaaye hum
+                    [00:32.00]Teri baahon mein mar jaaye hum
+                    [00:40.00]Tujhe dekha toh yeh jaana sanam
+                    [00:48.00]♪ Violins & Flute Interlude ♪
+                """.trimIndent()
+            ),
+            SongEntity(
+                id = 1006L,
+                title = "Shree Hanuman Chalisa",
+                artist = "Hariharan",
+                album = "Shree Hanuman Bhakti",
+                durationMs = 60_000L,
+                contentUri = "android.resource://${context.packageName}/raw/demo_track_2",
+                albumArtUri = null,
+                languageScript = "HINDI",
+                genre = "Devotional",
+                moodProfile = "CALM",
+                moodScore = 0.35f,
+                lrcLyrics = """
+                    [00:00.00]♪ Shankh Naad & Temple Bells ♪
+                    [00:07.00]Shree Guru Charan Saroj Raj Nij Manu Mukuru Sudhari
+                    [00:16.00]Barnau Raghuvar Bimal Jasu Jo Dayaku Phala Chari
+                    [00:25.00]Jai Hanuman Gyan Gun Sagar, Jai Kapis Tihun Lok Ujagar
+                    [00:35.00]Ram Doot Atulit Bal Dhama, Anjani Putra Pavan Sut Nama
+                    [00:46.00]Mahabir Bikram Bajrangi, Kumati Nivar Sumati Ke Sangi
+                    [00:55.00]♪ Om Shanti Peace Fade ♪
+                """.trimIndent()
+            ),
+            SongEntity(
+                id = 1007L,
+                title = "Kabira",
+                artist = "Pritam, Arijit Singh, Harshdeep Kaur",
+                album = "Yeh Jawaani Hai Deewani Soundtrack",
+                durationMs = 60_000L,
+                contentUri = "android.resource://${context.packageName}/raw/demo_track_1",
+                albumArtUri = null,
+                languageScript = "HINDI",
+                genre = "Bollywood",
+                moodProfile = "CHILL",
+                moodScore = 0.50f,
+                lrcLyrics = """
+                    [00:00.00]♪ Acoustic Guitar Strumming ♪
+                    [00:08.00]Kaisi teri khudgarzi, na dhoop chune na chhaanv
+                    [00:16.50]Kaisi teri khudgarzi, kisi thor tike na paanv
+                    [00:25.00]Ban liya apna paigambar, tarash liya tu ne aasmaan
+                    [00:34.00]Re Kabira maan jaa, re Fakeera maan jaa
+                    [00:43.00]Aaja tujhko pukare teri parchhaaiyan
+                    [00:52.00]♪ Sufi Chorus Harmony ♪
+                """.trimIndent()
+            ),
+            SongEntity(
+                id = 1008L,
+                title = "Zingaat",
+                artist = "Ajay-Atul",
+                album = "Sairat Marathi Soundtrack",
+                durationMs = 60_000L,
+                contentUri = "android.resource://${context.packageName}/raw/demo_track_4",
+                albumArtUri = null,
+                languageScript = "MARATHI",
+                genre = "Marathi",
+                moodProfile = "ENERGETIC",
+                moodScore = 0.98f,
+                lrcLyrics = """
+                    [00:00.00]♪ High-Octane Halgi & Sambal Beat ♪
+                    [00:08.00]Usavala ga bhet ghadali, kshanat aali kshanat geli
+                    [00:17.00]Manat aali manat geli, jhaali zing zing zingat!
+                    [00:25.50]Zing zing zingat, zing zing zingat!
+                    [00:34.00]Aata aadhi madhi yeto tula, baghun thodasa gaadhu tula
+                    [00:44.00]Jhaali zing zing zingat!
+                    [00:53.00]♪ Explosive Brass Roll ♪
                 """.trimIndent()
             )
         )

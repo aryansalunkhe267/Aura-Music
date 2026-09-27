@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import android.net.Uri
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -17,44 +18,34 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.CloudDownload
-import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.GraphicEq
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -74,12 +65,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -87,22 +78,23 @@ import androidx.compose.ui.window.Dialog
 import coil.compose.AsyncImage
 import com.example.data.PlaylistEntity
 import com.example.data.SongEntity
-import com.example.ui.theme.NeonMint
+import com.example.engine.SmartCategorizer
+import com.example.ui.components.FastScrollAlphabetIndexer
+import com.example.ui.components.TrackListItem
 import com.example.ui.theme.OneUICardElevated
 import com.example.ui.theme.OneUIDarkBackground
 import com.example.ui.theme.OneUISurfaceDark
 import com.example.ui.theme.OneUITextPrimary
 import com.example.ui.theme.OneUITextSecondary
-import com.example.ui.theme.SpotifyGreen
-import com.example.ui.components.TrackListItem
+import com.example.utils.MetadataSanitizer
 import com.example.utils.cleanMetadataString
 import java.io.File
 
 /**
- * Samsung Music Core UI with 5 Top Tabs:
- * Tracks, Playlists, Albums, Artists, and Folders.
- * Features a Universal Plus (+) Action button triggering playlist creation,
- * SAF local storage import, and online music search.
+ * Samsung One UI Library Screen with automated language & genre sections:
+ * Punjabi, Hindi, Marathi, Bollywood, 90s Hindi, Devotional, Playlists, Albums, Artists, Folders.
+ * Features fast-scroll alphabet indexer, custom wallpaper with Gaussian blur & scrim,
+ * and physical/virtual file actions.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -116,6 +108,7 @@ fun LibraryScreen(
     onRescanRequested: () -> Unit,
     onToggleSoftHide: (SongEntity) -> Unit,
     onToggleFavorite: (SongEntity) -> Unit,
+    onDeleteFromStorage: (SongEntity) -> Unit,
     onOpenAudioEditor: (SongEntity) -> Unit,
     onCreatePlaylist: (String) -> Unit,
     onAddSongToPlaylist: (playlistId: Long, songId: Long) -> Unit,
@@ -123,38 +116,59 @@ fun LibraryScreen(
     onRequestSafImport: () -> Unit,
     onOpenOnlineSearch: () -> Unit,
     onOpenSettings: () -> Unit,
-    visibleTabs: Set<String> = setOf("Tracks", "Playlists", "Albums", "Artists", "Folders"),
+    customWallpaperUri: String? = null,
+    wallpaperScrimAlpha: Float = 0.50f,
     modifier: Modifier = Modifier
 ) {
-    val allTabTitles = listOf("Tracks", "Playlists", "Albums", "Artists", "Folders")
-    val tabTitles = remember(visibleTabs) {
-        val filtered = allTabTitles.filter { visibleTabs.contains(it) }
-        if (filtered.isEmpty()) listOf("Tracks") else filtered
-    }
+    // Automated Library Sections
+    val allTabTitles = listOf(
+        "Tracks",
+        "Punjabi",
+        "Hindi",
+        "Marathi",
+        "Bollywood",
+        "90s Hindi",
+        "Devotional",
+        "Playlists",
+        "Albums",
+        "Artists",
+        "Folders"
+    )
 
     var selectedTopTabIndex by remember { mutableIntStateOf(0) }
-    val currentTabTitle = tabTitles.getOrElse(selectedTopTabIndex.coerceIn(0, tabTitles.size - 1)) { "Tracks" }
+    val currentTabTitle = allTabTitles.getOrElse(selectedTopTabIndex.coerceIn(0, allTabTitles.size - 1)) { "Tracks" }
 
     var searchQuery by remember { mutableStateOf("") }
     var isSearchActive by remember { mutableStateOf(false) }
-
-    // Sub-filters for Tracks tab: 0: All, 1: Punjabi, 2: Hindi/Marathi, 3: Hidden Vault
-    var selectedTrackSubFilter by remember { mutableIntStateOf(0) }
 
     // Dialogs & Sheets
     var showUniversalPlusSheet by remember { mutableStateOf(false) }
     var showCreatePlaylistDialog by remember { mutableStateOf(false) }
     var songForPlaylistSelection by remember { mutableStateOf<SongEntity?>(null) }
 
-    val filteredTracks = remember(librarySongs, hiddenVaultSongs, searchQuery, selectedTrackSubFilter) {
-        val baseList = if (selectedTrackSubFilter == 3) {
-            hiddenVaultSongs
-        } else {
-            when (selectedTrackSubFilter) {
-                1 -> librarySongs.filter { it.languageScript == "PUNJABI" }
-                2 -> librarySongs.filter { it.languageScript == "HINDI_MARATHI" }
-                else -> librarySongs
+    // Categorized song filtering
+    val currentSectionTracks = remember(librarySongs, currentTabTitle, searchQuery) {
+        val baseList = when (currentTabTitle) {
+            "Punjabi" -> librarySongs.filter {
+                SmartCategorizer.classify(it.title, it.artist, it.album, it.genre ?: "") == SmartCategorizer.Category.PUNJABI
             }
+            "Hindi" -> librarySongs.filter {
+                val cat = SmartCategorizer.classify(it.title, it.artist, it.album, it.genre ?: "")
+                cat == SmartCategorizer.Category.HINDI || cat == SmartCategorizer.Category.BOLLYWOOD || cat == SmartCategorizer.Category.NINETIES_HINDI
+            }
+            "Marathi" -> librarySongs.filter {
+                SmartCategorizer.classify(it.title, it.artist, it.album, it.genre ?: "") == SmartCategorizer.Category.MARATHI
+            }
+            "Bollywood" -> librarySongs.filter {
+                SmartCategorizer.classify(it.title, it.artist, it.album, it.genre ?: "") == SmartCategorizer.Category.BOLLYWOOD
+            }
+            "90s Hindi" -> librarySongs.filter {
+                SmartCategorizer.classify(it.title, it.artist, it.album, it.genre ?: "") == SmartCategorizer.Category.NINETIES_HINDI
+            }
+            "Devotional" -> librarySongs.filter {
+                SmartCategorizer.classify(it.title, it.artist, it.album, it.genre ?: "") == SmartCategorizer.Category.DEVOTIONAL
+            }
+            else -> librarySongs // "Tracks" shows all
         }
 
         if (searchQuery.isBlank()) {
@@ -169,10 +183,28 @@ fun LibraryScreen(
     }
 
     Box(modifier = modifier.fillMaxSize()) {
+        // Custom Gallery Wallpaper with Gaussian Blur & Scrim
+        if (!customWallpaperUri.isNullOrBlank()) {
+            AsyncImage(
+                model = customWallpaperUri,
+                contentDescription = "Custom Wallpaper",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .blur(24.dp)
+            )
+            // Configurable 40%-60% dark scrim overlay
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = wallpaperScrimAlpha))
+            )
+        }
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .background(OneUIDarkBackground)
+                .background(if (customWallpaperUri.isNullOrBlank()) OneUIDarkBackground else Color.Transparent)
         ) {
             // Samsung One UI Top Header
             Row(
@@ -184,7 +216,7 @@ fun LibraryScreen(
             ) {
                 Column {
                     Text(
-                        text = "Aura Music",
+                        text = "Pulse Music",
                         fontSize = 26.sp,
                         fontWeight = FontWeight.ExtraBold,
                         color = OneUITextPrimary
@@ -204,7 +236,7 @@ fun LibraryScreen(
                         Icon(
                             imageVector = Icons.Default.Search,
                             contentDescription = "Search",
-                            tint = if (isSearchActive) SpotifyGreen else OneUITextPrimary
+                            tint = if (isSearchActive) MaterialTheme.colorScheme.primary else OneUITextPrimary
                         )
                     }
 
@@ -237,13 +269,13 @@ fun LibraryScreen(
                 OutlinedTextField(
                     value = searchQuery,
                     onValueChange = { searchQuery = it },
-                    placeholder = { Text("Search songs, artists, albums...", fontSize = 14.sp) },
+                    placeholder = { Text("Search title, artist, or album...", fontSize = 14.sp) },
                     singleLine = true,
                     shape = RoundedCornerShape(16.dp),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedContainerColor = OneUISurfaceDark,
                         unfocusedContainerColor = OneUISurfaceDark,
-                        focusedBorderColor = SpotifyGreen,
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
                         unfocusedBorderColor = Color.Transparent,
                         focusedTextColor = OneUITextPrimary,
                         unfocusedTextColor = OneUITextPrimary
@@ -255,23 +287,23 @@ fun LibraryScreen(
                 )
             }
 
-            // Samsung One UI Top Tab Row
-            val activeTabIdx = selectedTopTabIndex.coerceIn(0, tabTitles.size - 1)
+            // Scrollable Automated Library Top Tabs
+            val activeTabIdx = selectedTopTabIndex.coerceIn(0, allTabTitles.size - 1)
             ScrollableTabRow(
                 selectedTabIndex = activeTabIdx,
-                containerColor = OneUIDarkBackground,
-                contentColor = SpotifyGreen,
+                containerColor = Color.Transparent,
+                contentColor = MaterialTheme.colorScheme.primary,
                 edgePadding = 16.dp,
                 indicator = { tabPositions ->
                     TabRowDefaults.SecondaryIndicator(
                         modifier = Modifier.tabIndicatorOffset(tabPositions[activeTabIdx]),
-                        color = SpotifyGreen,
+                        color = MaterialTheme.colorScheme.primary,
                         height = 3.dp
                     )
                 },
                 modifier = Modifier.fillMaxWidth()
             ) {
-                tabTitles.forEachIndexed { index, title ->
+                allTabTitles.forEachIndexed { index, title ->
                     Tab(
                         selected = activeTabIdx == index,
                         onClick = { selectedTopTabIndex = index },
@@ -280,33 +312,21 @@ fun LibraryScreen(
                                 text = title,
                                 fontSize = 14.sp,
                                 fontWeight = if (activeTabIdx == index) FontWeight.Bold else FontWeight.Normal,
-                                color = if (activeTabIdx == index) SpotifyGreen else OneUITextSecondary
+                                color = if (activeTabIdx == index) MaterialTheme.colorScheme.primary else OneUITextSecondary
                             )
                         },
-                        modifier = Modifier.testTag("tab_${title.lowercase()}")
+                        modifier = Modifier.testTag("tab_${title.lowercase().replace(" ", "_")}")
                     )
                 }
             }
 
-            // Content Body based on selected Top Tab
+            // Content Body
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
             ) {
                 when (currentTabTitle) {
-                    "Tracks" -> TracksTabView(
-                        tracks = filteredTracks,
-                        selectedSubFilter = selectedTrackSubFilter,
-                        onSelectSubFilter = { selectedTrackSubFilter = it },
-                        hiddenVaultCount = hiddenVaultSongs.size,
-                        currentPlayingSongId = currentPlayingSongId,
-                        onSongSelected = { song -> onSongSelected(song, filteredTracks) },
-                        onToggleSoftHide = onToggleSoftHide,
-                        onToggleFavorite = onToggleFavorite,
-                        onOpenAudioEditor = onOpenAudioEditor,
-                        onAddToPlaylistClick = { songForPlaylistSelection = it }
-                    )
                     "Playlists" -> PlaylistsTabView(
                         playlists = playlists,
                         favoriteSongs = favoriteSongs,
@@ -325,6 +345,16 @@ fun LibraryScreen(
                         librarySongs = librarySongs,
                         onSongSelected = onSongSelected
                     )
+                    else -> TrackListWithFastScroll(
+                        tracks = currentSectionTracks,
+                        currentPlayingSongId = currentPlayingSongId,
+                        onSongSelected = { song -> onSongSelected(song, currentSectionTracks) },
+                        onToggleFavorite = onToggleFavorite,
+                        onToggleSoftHide = onToggleSoftHide,
+                        onDeleteFromStorage = onDeleteFromStorage,
+                        onOpenAudioEditor = onOpenAudioEditor,
+                        onAddToPlaylistClick = { songForPlaylistSelection = it }
+                    )
                 }
             }
         }
@@ -332,7 +362,7 @@ fun LibraryScreen(
         // Universal Plus (+) Action FloatingActionButton
         FloatingActionButton(
             onClick = { showUniversalPlusSheet = true },
-            containerColor = SpotifyGreen,
+            containerColor = MaterialTheme.colorScheme.primary,
             contentColor = Color.Black,
             shape = CircleShape,
             modifier = Modifier
@@ -371,7 +401,7 @@ fun LibraryScreen(
                 )
                 Spacer(Modifier.height(16.dp))
 
-                // Action 1: Create Playlist
+                // Create Playlist
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -385,10 +415,10 @@ fun LibraryScreen(
                     Box(
                         modifier = Modifier
                             .size(44.dp)
-                            .background(SpotifyGreen.copy(alpha = 0.2f), CircleShape),
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.2f), CircleShape),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(Icons.Default.PlaylistAdd, contentDescription = null, tint = SpotifyGreen)
+                        Icon(Icons.Default.PlaylistAdd, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                     }
                     Spacer(Modifier.width(16.dp))
                     Column {
@@ -397,7 +427,7 @@ fun LibraryScreen(
                     }
                 }
 
-                // Action 2: Import Local Audio / Folder via SAF
+                // Import Local Audio via SAF
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -411,10 +441,10 @@ fun LibraryScreen(
                     Box(
                         modifier = Modifier
                             .size(44.dp)
-                            .background(NeonMint.copy(alpha = 0.2f), CircleShape),
+                            .background(Color(0xFF00E5FF).copy(alpha = 0.2f), CircleShape),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(Icons.Default.CreateNewFolder, contentDescription = null, tint = NeonMint)
+                        Icon(Icons.Default.CreateNewFolder, contentDescription = null, tint = Color(0xFF00E5FF))
                     }
                     Spacer(Modifier.width(16.dp))
                     Column {
@@ -423,7 +453,7 @@ fun LibraryScreen(
                     }
                 }
 
-                // Action 3: Search Online Music
+                // Online Search
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -437,10 +467,10 @@ fun LibraryScreen(
                     Box(
                         modifier = Modifier
                             .size(44.dp)
-                            .background(Color(0xFF388E3C).copy(alpha = 0.2f), CircleShape),
+                            .background(Color(0xFFFFB300).copy(alpha = 0.2f), CircleShape),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(Icons.Default.CloudDownload, contentDescription = null, tint = SpotifyGreen)
+                        Icon(Icons.Default.CloudDownload, contentDescription = null, tint = Color(0xFFFFB300))
                     }
                     Spacer(Modifier.width(16.dp))
                     Column {
@@ -479,7 +509,7 @@ fun LibraryScreen(
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedTextColor = OneUITextPrimary,
                             unfocusedTextColor = OneUITextPrimary,
-                            focusedBorderColor = SpotifyGreen
+                            focusedBorderColor = MaterialTheme.colorScheme.primary
                         ),
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -500,7 +530,7 @@ fun LibraryScreen(
                                 }
                             }
                         ) {
-                            Text("Create", color = SpotifyGreen, fontWeight = FontWeight.Bold)
+                            Text("Create", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -545,7 +575,7 @@ fun LibraryScreen(
                                     .padding(vertical = 10.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(Icons.Default.PlaylistAdd, contentDescription = null, tint = SpotifyGreen)
+                                Icon(Icons.Default.PlaylistAdd, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                                 Spacer(modifier = Modifier.width(12.dp))
                                 Column {
                                     Text(playlist.name, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = OneUITextPrimary)
@@ -560,7 +590,7 @@ fun LibraryScreen(
                         onClick = { songForPlaylistSelection = null },
                         modifier = Modifier.align(Alignment.End)
                     ) {
-                        Text("Close", color = SpotifyGreen)
+                        Text("Close", color = MaterialTheme.colorScheme.primary)
                     }
                 }
             }
@@ -568,276 +598,59 @@ fun LibraryScreen(
     }
 }
 
-// -------------------------------------------------------------
-// TAB 1: Tracks Tab View (Alphabetical list with Track numbers)
-// -------------------------------------------------------------
+/**
+ * Track list layout with pinned fast-scroll alphabet indexer on the right edge.
+ */
 @Composable
-private fun TracksTabView(
+private fun TrackListWithFastScroll(
     tracks: List<SongEntity>,
-    selectedSubFilter: Int,
-    onSelectSubFilter: (Int) -> Unit,
-    hiddenVaultCount: Int,
     currentPlayingSongId: Long?,
     onSongSelected: (SongEntity) -> Unit,
-    onToggleSoftHide: (SongEntity) -> Unit,
     onToggleFavorite: (SongEntity) -> Unit,
+    onToggleSoftHide: (SongEntity) -> Unit,
+    onDeleteFromStorage: (SongEntity) -> Unit,
     onOpenAudioEditor: (SongEntity) -> Unit,
     onAddToPlaylistClick: (SongEntity) -> Unit
 ) {
-    val subFilters = listOf(
-        "All (${tracks.size})",
-        "Punjabi",
-        "Hindi & Marathi",
-        "Hidden Vault ($hiddenVaultCount)"
-    )
+    val listState = rememberLazyListState()
 
-    Column(modifier = Modifier.fillMaxSize()) {
-        // Linguistic / Soft-Hide Filter Chips
-        LazyRow(
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            itemsIndexed(subFilters) { index, label ->
-                FilterChip(
-                    selected = selectedSubFilter == index,
-                    onClick = { onSelectSubFilter(index) },
-                    label = { Text(label, fontSize = 12.sp) },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = SpotifyGreen,
-                        selectedLabelColor = Color.Black,
-                        containerColor = OneUISurfaceDark,
-                        labelColor = OneUITextSecondary
-                    ),
-                    shape = RoundedCornerShape(16.dp)
-                )
-            }
+    if (tracks.isEmpty()) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text("No songs found in this section", color = OneUITextSecondary, fontSize = 14.sp)
         }
+        return
+    }
 
-        // Song List with track index and duration
+    Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
-            modifier = Modifier.fillMaxSize(),
+            state = listState,
+            modifier = Modifier.fillMaxSize().padding(end = 28.dp),
             contentPadding = PaddingValues(bottom = 96.dp)
         ) {
             itemsIndexed(tracks, key = { _, s -> s.id }) { index, song ->
-                TrackItemRow(
+                TrackListItem(
                     index = index + 1,
                     song = song,
                     isCurrentPlaying = song.id == currentPlayingSongId,
-                    onItemClick = { onSongSelected(song) },
-                    onToggleSoftHide = { onToggleSoftHide(song) },
+                    onClick = { onSongSelected(song) },
                     onToggleFavorite = { onToggleFavorite(song) },
+                    onToggleSoftHide = { onToggleSoftHide(song) },
+                    onDeleteFromStorage = { onDeleteFromStorage(song) },
                     onOpenAudioEditor = { onOpenAudioEditor(song) },
                     onAddToPlaylistClick = { onAddToPlaylistClick(song) }
                 )
             }
         }
-    }
-}
 
-@Composable
-private fun TrackItemRow(
-    index: Int,
-    song: SongEntity,
-    isCurrentPlaying: Boolean,
-    onItemClick: () -> Unit,
-    onToggleSoftHide: () -> Unit,
-    onToggleFavorite: () -> Unit,
-    onOpenAudioEditor: () -> Unit,
-    onAddToPlaylistClick: () -> Unit
-) {
-    var showMenu by remember { mutableStateOf(false) }
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onItemClick)
-            .background(if (isCurrentPlaying) SpotifyGreen.copy(alpha = 0.08f) else Color.Transparent)
-            .padding(horizontal = 16.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        // Track number index or animated playing indicator
-        Box(
-            modifier = Modifier.width(32.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            if (isCurrentPlaying) {
-                Icon(
-                    imageVector = Icons.Default.GraphicEq,
-                    contentDescription = "Playing",
-                    tint = SpotifyGreen,
-                    modifier = Modifier.size(18.dp)
-                )
-            } else {
-                Text(
-                    text = index.toString(),
-                    fontSize = 12.sp,
-                    color = OneUITextSecondary,
-                    fontWeight = FontWeight.Medium
-                )
-            }
-        }
-
-        // Album Art
-        Box(
-            modifier = Modifier
-                .size(46.dp)
-                .clip(RoundedCornerShape(8.dp))
-        ) {
-            val artModel = song.coverArtUrl ?: song.albumArtUri
-            if (!artModel.isNullOrBlank()) {
-                AsyncImage(
-                    model = artModel,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
-                )
-            } else {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(OneUISurfaceDark),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.MusicNote,
-                        contentDescription = null,
-                        tint = SpotifyGreen.copy(alpha = 0.6f),
-                        modifier = Modifier.size(22.dp)
-                    )
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.width(12.dp))
-
-        // Title & Artist: strictly clean metadata without subtitles or concatenations
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = cleanMetadataString(song.title),
-                fontSize = 14.sp,
-                fontWeight = if (isCurrentPlaying) FontWeight.Bold else FontWeight.SemiBold,
-                color = if (isCurrentPlaying) SpotifyGreen else OneUITextPrimary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Spacer(modifier = Modifier.height(2.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = cleanMetadataString(song.artist),
-                    fontSize = 12.sp,
-                    color = OneUITextSecondary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false)
-                )
-                if (song.sourceType == "ONLINE") {
-                    Spacer(Modifier.width(6.dp))
-                    Text("• Online", fontSize = 10.sp, color = NeonMint)
-                }
-            }
-        }
-
-        // Favorite Heart Button
-        IconButton(
-            onClick = onToggleFavorite,
-            modifier = Modifier.size(36.dp)
-        ) {
-            Icon(
-                imageVector = if (song.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                contentDescription = "Favorite",
-                tint = if (song.isFavorite) Color(0xFFFF4081) else OneUITextSecondary,
-                modifier = Modifier.size(20.dp)
-            )
-        }
-
-        // Duration
-        Text(
-            text = formatDuration(song.durationMs),
-            fontSize = 12.sp,
-            color = OneUITextSecondary,
-            modifier = Modifier.padding(horizontal = 4.dp)
+        // Pinned interactive fast-scroll alphabet indexer
+        FastScrollAlphabetIndexer(
+            tracks = tracks,
+            listState = listState,
+            modifier = Modifier.align(Alignment.CenterEnd)
         )
-
-        // Dropdown Menu for Actions
-        Box {
-            IconButton(
-                onClick = { showMenu = true },
-                modifier = Modifier.size(36.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.MoreVert,
-                    contentDescription = "Options",
-                    tint = OneUITextSecondary,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-
-            DropdownMenu(
-                expanded = showMenu,
-                onDismissRequest = { showMenu = false },
-                modifier = Modifier.background(OneUICardElevated)
-            ) {
-                DropdownMenuItem(
-                    text = { Text(if (song.isFavorite) "Remove from Favorites" else "Add to Favorites", color = OneUITextPrimary) },
-                    onClick = {
-                        showMenu = false
-                        onToggleFavorite()
-                    },
-                    leadingIcon = {
-                        Icon(
-                            if (song.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                            contentDescription = null,
-                            tint = Color(0xFFFF4081)
-                        )
-                    }
-                )
-                DropdownMenuItem(
-                    text = { Text("Add to Playlist", color = OneUITextPrimary) },
-                    onClick = {
-                        showMenu = false
-                        onAddToPlaylistClick()
-                    },
-                    leadingIcon = {
-                        Icon(Icons.Default.PlaylistAdd, contentDescription = null, tint = SpotifyGreen)
-                    }
-                )
-                DropdownMenuItem(
-                    text = {
-                        Text(
-                            if (song.isHiddenFromLibrary) "Unhide from Library" else "Soft-Hide (Playlist Only)",
-                            color = OneUITextPrimary
-                        )
-                    },
-                    onClick = {
-                        showMenu = false
-                        onToggleSoftHide()
-                    },
-                    leadingIcon = {
-                        Icon(
-                            if (song.isHiddenFromLibrary) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                            contentDescription = null,
-                            tint = NeonMint
-                        )
-                    }
-                )
-                DropdownMenuItem(
-                    text = { Text("Trim / Cut Audio", color = OneUITextPrimary) },
-                    onClick = {
-                        showMenu = false
-                        onOpenAudioEditor()
-                    },
-                    leadingIcon = {
-                        Icon(Icons.Default.ContentCut, contentDescription = null, tint = OneUITextPrimary)
-                    }
-                )
-            }
-        }
     }
 }
 
-// -------------------------------------------------------------
-// TAB 2: Playlists Tab View
-// -------------------------------------------------------------
 @Composable
 private fun PlaylistsTabView(
     playlists: List<PlaylistEntity>,
@@ -850,7 +663,6 @@ private fun PlaylistsTabView(
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 96.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        // Pinned Favorites Playlist Card
         if (favoriteSongs.isNotEmpty()) {
             item {
                 Card(
@@ -873,13 +685,13 @@ private fun PlaylistsTabView(
                             modifier = Modifier
                                 .size(50.dp)
                                 .clip(RoundedCornerShape(12.dp))
-                                .background(Color(0xFFE91E63).copy(alpha = 0.2f)),
+                                .background(Color(0xFFFF2A6D).copy(alpha = 0.2f)),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Favorite,
                                 contentDescription = null,
-                                tint = Color(0xFFFF4081),
+                                tint = Color(0xFFFF2A6D),
                                 modifier = Modifier.size(28.dp)
                             )
                         }
@@ -900,7 +712,7 @@ private fun PlaylistsTabView(
                         Icon(
                             imageVector = Icons.Default.PlayArrow,
                             contentDescription = "Play Favorites",
-                            tint = SpotifyGreen
+                            tint = MaterialTheme.colorScheme.primary
                         )
                     }
                 }
@@ -922,15 +734,15 @@ private fun PlaylistsTabView(
                     Box(
                         modifier = Modifier
                             .size(48.dp)
-                            .background(SpotifyGreen.copy(alpha = 0.2f), CircleShape),
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.2f), CircleShape),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(Icons.Default.Add, contentDescription = null, tint = SpotifyGreen)
+                        Icon(Icons.Default.Add, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                     }
                     Spacer(Modifier.width(14.dp))
                     Column {
                         Text("Create New Playlist", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OneUITextPrimary)
-                        Text("Organize your favorite Punjabi, Hindi, and Marathi tracks", fontSize = 12.sp, color = OneUITextSecondary)
+                        Text("Organize custom Punjabi, Hindi, and Marathi collections", fontSize = 12.sp, color = OneUITextSecondary)
                     }
                 }
             }
@@ -958,7 +770,7 @@ private fun PlaylistsTabView(
                         Icon(
                             imageVector = Icons.Default.PlaylistAdd,
                             contentDescription = null,
-                            tint = if (playlist.isAutoGenerated) NeonMint else SpotifyGreen,
+                            tint = if (playlist.isAutoGenerated) MaterialTheme.colorScheme.primary else Color.White,
                             modifier = Modifier.size(26.dp)
                         )
                     }
@@ -982,7 +794,7 @@ private fun PlaylistsTabView(
                     Icon(
                         imageVector = Icons.Default.PlayArrow,
                         contentDescription = "Play Playlist",
-                        tint = SpotifyGreen
+                        tint = MaterialTheme.colorScheme.primary
                     )
                 }
             }
@@ -990,16 +802,16 @@ private fun PlaylistsTabView(
     }
 }
 
-// -------------------------------------------------------------
-// TAB 3: Albums Tab View (Grid View with Cover Art Cards)
-// -------------------------------------------------------------
+/**
+ * Albums tab with Canonical Album Consolidation (merges duplicate split albums).
+ */
 @Composable
 private fun AlbumsTabView(
     librarySongs: List<SongEntity>,
     onSongSelected: (SongEntity, List<SongEntity>) -> Unit
 ) {
     val albumGroups = remember(librarySongs) {
-        librarySongs.groupBy { it.album }
+        librarySongs.groupBy { MetadataSanitizer.getCanonicalAlbum(it.album) }
     }
 
     if (albumGroups.isEmpty()) {
@@ -1016,9 +828,9 @@ private fun AlbumsTabView(
         verticalArrangement = Arrangement.spacedBy(14.dp),
         modifier = Modifier.fillMaxSize()
     ) {
-        items(albumGroups.keys.toList()) { albumName ->
-            val albumTracks = albumGroups[albumName] ?: emptyList()
-            val representativeSong = albumTracks.firstOrNull()
+        items(albumGroups.keys.toList()) { canonicalAlbumName ->
+            val albumTracks = albumGroups[canonicalAlbumName] ?: emptyList()
+            val representative = albumTracks.firstOrNull()
 
             Card(
                 shape = RoundedCornerShape(16.dp),
@@ -1026,7 +838,7 @@ private fun AlbumsTabView(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable {
-                        representativeSong?.let { onSongSelected(it, albumTracks) }
+                        representative?.let { onSongSelected(it, albumTracks) }
                     }
             ) {
                 Column {
@@ -1034,35 +846,120 @@ private fun AlbumsTabView(
                         modifier = Modifier
                             .fillMaxWidth()
                             .aspectRatio(1f)
+                            .background(OneUISurfaceDark)
                     ) {
-                        if (!representativeSong?.albumArtUri.isNullOrBlank()) {
+                        val art = representative?.coverArtUrl ?: representative?.albumArtUri
+                        if (!art.isNullOrBlank()) {
                             AsyncImage(
-                                model = representativeSong?.albumArtUri,
-                                contentDescription = albumName,
+                                model = art,
+                                contentDescription = canonicalAlbumName,
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier.fillMaxSize()
                             )
                         } else {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .background(OneUISurfaceDark),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Album,
-                                    contentDescription = null,
-                                    tint = SpotifyGreen.copy(alpha = 0.7f),
-                                    modifier = Modifier.size(48.dp)
-                                )
-                            }
+                            Icon(
+                                imageVector = Icons.Default.Album,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                                modifier = Modifier.size(54.dp).align(Alignment.Center)
+                            )
                         }
                     }
 
                     Column(modifier = Modifier.padding(12.dp)) {
                         Text(
-                            text = albumName,
+                            text = canonicalAlbumName,
                             fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = OneUITextPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "${albumTracks.size} tracks",
+                            fontSize = 12.sp,
+                            color = OneUITextSecondary
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Artists tab with Canonical Artist Consolidation (merges "feat.", "&", and casing duplicates).
+ */
+@Composable
+private fun ArtistsTabView(
+    librarySongs: List<SongEntity>,
+    onSongSelected: (SongEntity, List<SongEntity>) -> Unit
+) {
+    val artistGroups = remember(librarySongs) {
+        librarySongs.groupBy { MetadataSanitizer.getCanonicalArtist(it.artist) }
+    }
+
+    if (artistGroups.isEmpty()) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text("No artists found in offline storage", color = OneUITextSecondary)
+        }
+        return
+    }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 96.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        items(artistGroups.keys.toList()) { canonicalArtist ->
+            val tracks = artistGroups[canonicalArtist] ?: emptyList()
+            val representative = tracks.firstOrNull()
+
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = OneUICardElevated),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        representative?.let { onSongSelected(it, tracks) }
+                    }
+            ) {
+                Row(
+                    modifier = Modifier.padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(52.dp)
+                            .clip(CircleShape)
+                            .background(OneUISurfaceDark),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        val art = representative?.coverArtUrl ?: representative?.albumArtUri
+                        if (!art.isNullOrBlank()) {
+                            AsyncImage(
+                                model = art,
+                                contentDescription = canonicalArtist,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        } else {
+                            Icon(
+                                imageVector = Icons.Default.Person,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
+                    }
+
+                    Spacer(Modifier.width(16.dp))
+
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = canonicalArtist,
+                            fontSize = 15.sp,
                             fontWeight = FontWeight.Bold,
                             color = OneUITextPrimary,
                             maxLines = 1,
@@ -1070,113 +967,26 @@ private fun AlbumsTabView(
                         )
                         Spacer(Modifier.height(2.dp))
                         Text(
-                            text = representativeSong?.artist ?: "Unknown Artist",
-                            fontSize = 12.sp,
-                            color = OneUITextSecondary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Spacer(Modifier.height(2.dp))
-                        Text(
-                            text = "${albumTracks.size} tracks",
-                            fontSize = 11.sp,
-                            color = NeonMint
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-// -------------------------------------------------------------
-// TAB 4: Artists Tab View (Circular Avatar List)
-// -------------------------------------------------------------
-@Composable
-private fun ArtistsTabView(
-    librarySongs: List<SongEntity>,
-    onSongSelected: (SongEntity, List<SongEntity>) -> Unit
-) {
-    val artistGroups = remember(librarySongs) {
-        librarySongs.groupBy { it.artist }
-    }
-
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 96.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        items(artistGroups.keys.toList()) { artistName ->
-            val artistTracks = artistGroups[artistName] ?: emptyList()
-            val sample = artistTracks.firstOrNull()
-
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = OneUICardElevated),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable {
-                        sample?.let { onSongSelected(it, artistTracks) }
-                    }
-            ) {
-                Row(
-                    modifier = Modifier.padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    // Circular Avatar
-                    Box(
-                        modifier = Modifier
-                            .size(54.dp)
-                            .clip(CircleShape)
-                    ) {
-                        if (!sample?.albumArtUri.isNullOrBlank()) {
-                            AsyncImage(
-                                model = sample?.albumArtUri,
-                                contentDescription = artistName,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize()
-                            )
-                        } else {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .background(OneUISurfaceDark),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(Icons.Default.Person, contentDescription = null, tint = SpotifyGreen)
-                            }
-                        }
-                    }
-
-                    Spacer(Modifier.width(14.dp))
-
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = artistName,
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = OneUITextPrimary
-                        )
-                        Spacer(Modifier.height(2.dp))
-                        Text(
-                            text = "${artistTracks.size} tracks",
+                            text = "${tracks.size} songs",
                             fontSize = 12.sp,
                             color = OneUITextSecondary
                         )
                     }
 
-                    IconButton(onClick = { sample?.let { onSongSelected(it, artistTracks) } }) {
-                        Icon(Icons.Default.PlayArrow, contentDescription = "Play Artist", tint = SpotifyGreen)
-                    }
+                    Icon(
+                        imageVector = Icons.Default.PlayArrow,
+                        contentDescription = "Play Artist",
+                        tint = MaterialTheme.colorScheme.primary
+                    )
                 }
             }
         }
     }
 }
 
-// -------------------------------------------------------------
-// TAB 5: Folders Tab View (Direct Local Directory Browser)
-// -------------------------------------------------------------
+/**
+ * Folders tab showing storage directory structure.
+ */
 @Composable
 private fun FoldersTabView(
     librarySongs: List<SongEntity>,
@@ -1184,12 +994,11 @@ private fun FoldersTabView(
 ) {
     val folderGroups = remember(librarySongs) {
         librarySongs.groupBy { song ->
-            val path = song.dataPath
+            val path = song.dataPath ?: song.localPath
             if (!path.isNullOrBlank()) {
-                val f = File(path)
-                f.parentFile?.name ?: "Storage"
+                File(path).parentFile?.name ?: "Music"
             } else {
-                "Music Storage"
+                "Music"
             }
         }
     }
@@ -1197,36 +1006,38 @@ private fun FoldersTabView(
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 96.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         items(folderGroups.keys.toList()) { folderName ->
-            val folderTracks = folderGroups[folderName] ?: emptyList()
-            val sample = folderTracks.firstOrNull()
-
+            val tracks = folderGroups[folderName] ?: emptyList()
             Card(
                 shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(containerColor = OneUICardElevated),
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable {
-                        sample?.let { onSongSelected(it, folderTracks) }
+                        tracks.firstOrNull()?.let { onSongSelected(it, tracks) }
                     }
             ) {
                 Row(
-                    modifier = Modifier.padding(14.dp),
+                    modifier = Modifier.padding(16.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(48.dp)
-                            .background(SpotifyGreen.copy(alpha = 0.2f), RoundedCornerShape(12.dp)),
+                            .size(46.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color(0xFF2C3E50).copy(alpha = 0.5f)),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(Icons.Default.Folder, contentDescription = null, tint = SpotifyGreen, modifier = Modifier.size(28.dp))
+                        Icon(
+                            imageVector = Icons.Default.Folder,
+                            contentDescription = null,
+                            tint = Color(0xFFF39C12),
+                            modifier = Modifier.size(24.dp)
+                        )
                     }
-
-                    Spacer(Modifier.width(14.dp))
-
+                    Spacer(Modifier.width(16.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = folderName,
@@ -1234,24 +1045,19 @@ private fun FoldersTabView(
                             fontWeight = FontWeight.Bold,
                             color = OneUITextPrimary
                         )
-                        Spacer(Modifier.height(2.dp))
                         Text(
-                            text = "${folderTracks.size} audio files",
+                            text = "${tracks.size} audio files",
                             fontSize = 12.sp,
                             color = OneUITextSecondary
                         )
                     }
-
-                    Icon(Icons.Default.PlayArrow, contentDescription = "Play Folder", tint = SpotifyGreen)
+                    Icon(
+                        imageVector = Icons.Default.PlayArrow,
+                        contentDescription = "Play Folder",
+                        tint = MaterialTheme.colorScheme.primary
+                    )
                 }
             }
         }
     }
-}
-
-private fun formatDuration(durationMs: Long): String {
-    val totalSecs = (durationMs / 1000).coerceAtLeast(0L)
-    val mins = totalSecs / 60
-    val secs = totalSecs % 60
-    return String.format("%d:%02d", mins, secs)
 }

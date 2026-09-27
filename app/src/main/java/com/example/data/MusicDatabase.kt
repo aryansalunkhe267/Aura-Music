@@ -9,9 +9,11 @@ import androidx.room.RoomDatabase
     entities = [
         SongEntity::class,
         PlaylistEntity::class,
-        PlaylistSongCrossRef::class
+        PlaylistSongCrossRef::class,
+        PlaybackHistoryEntity::class,
+        SpotifyAffinityEntity::class
     ],
-    version = 3,
+    version = 5,
     exportSchema = false
 )
 abstract class MusicDatabase : RoomDatabase() {
@@ -26,7 +28,7 @@ abstract class MusicDatabase : RoomDatabase() {
                 val instance = Room.databaseBuilder(
                     context.applicationContext,
                     MusicDatabase::class.java,
-                    "aura_music_db"
+                    "pulse_music_db"
                 )
                     .fallbackToDestructiveMigration()
                     .build()

@@ -1,32 +1,46 @@
 package com.example
 
 import android.Manifest
+import android.app.Activity
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.MediaStore
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.BottomSheetDefaults
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Album
+import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material3.BottomSheetScaffold
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.SheetValue
+import androidx.compose.material3.Text
 import androidx.compose.material3.rememberBottomSheetScaffoldState
 import androidx.compose.material3.rememberStandardBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -34,21 +48,31 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.example.data.PlaylistEntity
 import com.example.data.SongEntity
 import com.example.playback.PlaybackManager
 import com.example.ui.components.AudioEditorDialog
 import com.example.ui.components.EnhancedPlayerSheet
 import com.example.ui.components.MiniPlayerBar
-import com.example.ui.components.OnlineSearchDialog
+import com.example.ui.components.SpotifyLoginDialog
 import com.example.ui.screens.LibraryScreen
+import com.example.ui.screens.OnlineExploreScreen
+import com.example.ui.screens.ServerSettingsScreen
 import com.example.ui.screens.SettingsScreen
-import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.theme.OneUIDarkBackground
+import com.example.ui.theme.OneUITextSecondary
+import com.example.ui.theme.PulseMusicTheme
 import kotlinx.coroutines.launch
+
+enum class MainNavTab {
+    LOCAL_LIBRARY,
+    ONLINE_EXPLORE
+}
 
 class MainActivity : ComponentActivity() {
 
@@ -58,11 +82,37 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         setContent {
-            MyApplicationTheme {
-                val context = LocalContext.current
-                val app = context.applicationContext as AuraMusicApp
-                val repository = app.repository
-                val coroutineScope = rememberCoroutineScope()
+            val context = LocalContext.current
+            val app = context.applicationContext as PulseMusicApp
+            val repository = app.repository
+            val settingsManager = app.settingsManager
+            val spotifyRepository = app.spotifyRepository
+            val personalizationRepository = app.personalizationRepository
+            val coroutineScope = rememberCoroutineScope()
+
+            val currentThemePreset by settingsManager.themePreset.collectAsStateWithLifecycle()
+            val customWallpaperUri by settingsManager.customWallpaperUri.collectAsStateWithLifecycle()
+            val wallpaperScrimAlpha by settingsManager.wallpaperScrimAlpha.collectAsStateWithLifecycle()
+
+            PulseMusicTheme(preset = currentThemePreset) {
+                // Media Deletion tracking for scoped storage prompt
+                var pendingDeleteSong by remember { mutableStateOf<SongEntity?>(null) }
+
+                val deleteRequestLauncher = rememberLauncherForActivityResult(
+                    ActivityResultContracts.StartIntentSenderForResult()
+                ) { result ->
+                    if (result.resultCode == Activity.RESULT_OK) {
+                        pendingDeleteSong?.let { song ->
+                            coroutineScope.launch {
+                                repository.deleteSongPermanently(song.id)
+                                Toast.makeText(context, "Deleted permanently from storage", Toast.LENGTH_SHORT).show()
+                                pendingDeleteSong = null
+                            }
+                        }
+                    } else {
+                        pendingDeleteSong = null
+                    }
+                }
 
                 // SAF Import launcher for local audio files
                 val safLauncher = rememberLauncherForActivityResult(
@@ -122,7 +172,6 @@ class MainActivity : ComponentActivity() {
                 val hiddenVaultSongs by repository.hiddenVaultSongs.collectAsStateWithLifecycle(initialValue = emptyList())
                 val playlists by repository.playlists.collectAsStateWithLifecycle(initialValue = emptyList())
                 val favoriteSongs by repository.favoriteSongs.collectAsStateWithLifecycle(initialValue = emptyList())
-                val visibleTabs by app.settingsManager.visibleTabs.collectAsStateWithLifecycle()
 
                 // Reactive Playback State
                 val currentSong by PlaybackManager.currentSong.collectAsStateWithLifecycle()
@@ -133,17 +182,27 @@ class MainActivity : ComponentActivity() {
                 val currentQueueIndex by PlaybackManager.currentQueueIndex.collectAsStateWithLifecycle()
                 val isShuffleEnabled by PlaybackManager.isShuffleEnabled.collectAsStateWithLifecycle()
                 val repeatMode by PlaybackManager.repeatMode.collectAsStateWithLifecycle()
-                val smartMoodQueueEnabled by PlaybackManager.smartMoodQueueEnabled.collectAsStateWithLifecycle()
+                val smartMoodQueueEnabled by PlaybackManager.languageLockedQueueEnabled.collectAsStateWithLifecycle()
                 val downloadProgressMap by repository.downloadManager.downloadProgressMap.collectAsStateWithLifecycle()
 
-                // Dialogs & Navigation
+                // Dialogs & Navigation State
+                var currentNavTab by remember { mutableStateOf(MainNavTab.LOCAL_LIBRARY) }
                 var editingSongForTrim by remember { mutableStateOf<SongEntity?>(null) }
-                var showOnlineSearchDialog by remember { mutableStateOf(false) }
                 var showSettingsScreen by remember { mutableStateOf(false) }
+                var showServerSettingsScreen by remember { mutableStateOf(false) }
+                var showSpotifyLoginDialog by remember { mutableStateOf(false) }
+                var exploreRefreshTrigger by remember { mutableLongStateOf(0L) }
 
-                // Clean Back navigation: collapse expanded player or back from settings
                 BackHandler(enabled = showSettingsScreen) {
                     showSettingsScreen = false
+                }
+
+                BackHandler(enabled = showServerSettingsScreen) {
+                    showServerSettingsScreen = false
+                }
+
+                BackHandler(enabled = !showSettingsScreen && !showServerSettingsScreen && currentNavTab == MainNavTab.ONLINE_EXPLORE) {
+                    currentNavTab = MainNavTab.LOCAL_LIBRARY
                 }
 
                 // Samsung One UI BottomSheetScaffold configuration
@@ -154,13 +213,14 @@ class MainActivity : ComponentActivity() {
                 val scaffoldState = rememberBottomSheetScaffoldState(bottomSheetState = bottomSheetState)
 
                 val isExpanded = bottomSheetState.currentValue == SheetValue.Expanded
-                BackHandler(enabled = isExpanded && !showSettingsScreen) {
+                BackHandler(enabled = isExpanded && !showSettingsScreen && !showServerSettingsScreen) {
                     coroutineScope.launch {
                         bottomSheetState.partialExpand()
                     }
                 }
 
-                val peekHeight = if (currentSong != null) 74.dp else 0.dp
+                // Peek height calculates space for MiniPlayerBar (74.dp) + NavigationBar (64.dp)
+                val peekHeight = if (currentSong != null) 138.dp else 64.dp
 
                 BottomSheetScaffold(
                     scaffoldState = scaffoldState,
@@ -187,7 +247,7 @@ class MainActivity : ComponentActivity() {
                                     onSeekTo = { pos -> PlaybackManager.seekTo(pos) },
                                     onToggleShuffle = { PlaybackManager.toggleShuffle() },
                                     onToggleRepeat = { PlaybackManager.toggleRepeat() },
-                                    onToggleSmartMoodQueue = { PlaybackManager.toggleSmartMoodQueue() },
+                                    onToggleSmartMoodQueue = { PlaybackManager.toggleLanguageLockedQueue() },
                                     onQueueSongClick = { idx -> PlaybackManager.playAtIndex(idx) },
                                     onMoveQueueItem = { from, to -> PlaybackManager.reorderQueue(from, to) },
                                     onRemoveQueueItem = { idx -> PlaybackManager.removeFromQueue(idx) },
@@ -219,24 +279,95 @@ class MainActivity : ComponentActivity() {
                                     }
                                 )
                             } else {
-                                MiniPlayerBar(
-                                    song = currentSong,
-                                    isPlaying = isPlaying,
-                                    currentPositionMs = currentPositionMs,
-                                    durationMs = durationMs,
-                                    onPlayPauseClick = { PlaybackManager.playPause() },
-                                    onNextClick = { PlaybackManager.playNext() },
-                                    onToggleFavorite = {
-                                        currentSong?.let { target ->
-                                            coroutineScope.launch {
-                                                repository.toggleFavorite(target.id)
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(OneUIDarkBackground)
+                                ) {
+                                    if (currentSong != null) {
+                                        MiniPlayerBar(
+                                            song = currentSong,
+                                            isPlaying = isPlaying,
+                                            currentPositionMs = currentPositionMs,
+                                            durationMs = durationMs,
+                                            onPlayPauseClick = { PlaybackManager.playPause() },
+                                            onNextClick = { PlaybackManager.playNext() },
+                                            onToggleFavorite = {
+                                                currentSong?.let { target ->
+                                                    coroutineScope.launch {
+                                                        repository.toggleFavorite(target.id)
+                                                    }
+                                                }
+                                            },
+                                            onClick = {
+                                                coroutineScope.launch { bottomSheetState.expand() }
                                             }
-                                        }
-                                    },
-                                    onClick = {
-                                        coroutineScope.launch { bottomSheetState.expand() }
+                                        )
                                     }
-                                )
+
+                                    // Main Dual-Mode Bottom Navigation Bar (Local Library vs Online Explore)
+                                    NavigationBar(
+                                        containerColor = OneUIDarkBackground,
+                                        contentColor = MaterialTheme.colorScheme.primary,
+                                        tonalElevation = 8.dp,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(64.dp)
+                                            .testTag("main_bottom_nav_bar")
+                                    ) {
+                                        NavigationBarItem(
+                                            selected = currentNavTab == MainNavTab.LOCAL_LIBRARY && !showSettingsScreen,
+                                            onClick = {
+                                                currentNavTab = MainNavTab.LOCAL_LIBRARY
+                                                showSettingsScreen = false
+                                            },
+                                            icon = {
+                                                Icon(Icons.Default.Album, contentDescription = "Local Library")
+                                            },
+                                            label = {
+                                                Text(
+                                                    text = "Local Library",
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.SemiBold
+                                                )
+                                            },
+                                            colors = NavigationBarItemDefaults.colors(
+                                                selectedIconColor = Color.Black,
+                                                selectedTextColor = MaterialTheme.colorScheme.primary,
+                                                indicatorColor = MaterialTheme.colorScheme.primary,
+                                                unselectedIconColor = OneUITextSecondary,
+                                                unselectedTextColor = OneUITextSecondary
+                                            ),
+                                            modifier = Modifier.testTag("tab_local_library")
+                                        )
+
+                                        NavigationBarItem(
+                                            selected = currentNavTab == MainNavTab.ONLINE_EXPLORE && !showSettingsScreen,
+                                            onClick = {
+                                                currentNavTab = MainNavTab.ONLINE_EXPLORE
+                                                showSettingsScreen = false
+                                            },
+                                            icon = {
+                                                Icon(Icons.Default.CloudDownload, contentDescription = "Online Explore")
+                                            },
+                                            label = {
+                                                Text(
+                                                    text = "Online Explore",
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.SemiBold
+                                                )
+                                            },
+                                            colors = NavigationBarItemDefaults.colors(
+                                                selectedIconColor = Color.Black,
+                                                selectedTextColor = MaterialTheme.colorScheme.primary,
+                                                indicatorColor = MaterialTheme.colorScheme.primary,
+                                                unselectedIconColor = OneUITextSecondary,
+                                                unselectedTextColor = OneUITextSecondary
+                                            ),
+                                            modifier = Modifier.testTag("tab_online_explore")
+                                        )
+                                    }
+                                }
                             }
                         }
                     },
@@ -249,75 +380,130 @@ class MainActivity : ComponentActivity() {
                         ) {
                             if (showSettingsScreen) {
                                 SettingsScreen(
-                                    settingsManager = app.settingsManager,
+                                    settingsManager = settingsManager,
                                     onBack = { showSettingsScreen = false }
                                 )
-                            } else {
-                                LibraryScreen(
-                                    librarySongs = librarySongs,
-                                    hiddenVaultSongs = hiddenVaultSongs,
-                                    favoriteSongs = favoriteSongs,
-                                    playlists = playlists,
-                                    currentPlayingSongId = currentSong?.id,
-                                    onSongSelected = { song, playlistContext ->
-                                        PlaybackManager.playSong(song, playlistContext)
-                                    },
-                                    onRescanRequested = {
-                                        coroutineScope.launch {
-                                            val count = repository.scanLocalAudioLibrary()
-                                            Toast.makeText(context, "Scanned $count offline songs", Toast.LENGTH_SHORT).show()
-                                        }
-                                    },
-                                    onToggleSoftHide = { targetSong ->
-                                        coroutineScope.launch {
-                                            val newState = !targetSong.isHiddenFromLibrary
-                                            repository.setSongHidden(targetSong.id, newState)
-                                            val msg = if (newState) "Moved to Hidden Vault (Playlist only)" else "Restored to Library"
-                                            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
-                                        }
-                                    },
-                                    onToggleFavorite = { targetSong ->
-                                        coroutineScope.launch {
-                                            repository.toggleFavorite(targetSong.id)
-                                        }
-                                    },
-                                    onOpenAudioEditor = { targetSong ->
-                                        editingSongForTrim = targetSong
-                                    },
-                                    onCreatePlaylist = { name ->
-                                        coroutineScope.launch {
-                                            repository.createPlaylist(name)
-                                            Toast.makeText(context, "Playlist '$name' created", Toast.LENGTH_SHORT).show()
-                                        }
-                                    },
-                                    onAddSongToPlaylist = { playlistId, songId ->
-                                        coroutineScope.launch {
-                                            repository.addSongToPlaylist(playlistId, songId)
-                                            Toast.makeText(context, "Added to playlist", Toast.LENGTH_SHORT).show()
-                                        }
-                                    },
-                                    onSelectPlaylist = { selectedPlaylist ->
-                                        coroutineScope.launch {
-                                            app.database.musicDao().getSongsForPlaylist(selectedPlaylist.playlistId).collect { playlistSongs ->
-                                                if (playlistSongs.isNotEmpty()) {
-                                                    PlaybackManager.playSong(playlistSongs.first(), playlistSongs)
-                                                } else {
-                                                    Toast.makeText(context, "Playlist is empty", Toast.LENGTH_SHORT).show()
-                                                }
-                                            }
-                                        }
-                                    },
-                                    onRequestSafImport = {
-                                        safLauncher.launch(arrayOf("audio/*"))
-                                    },
-                                    onOpenOnlineSearch = {
-                                        showOnlineSearchDialog = true
-                                    },
-                                    onOpenSettings = {
-                                        showSettingsScreen = true
-                                    },
-                                    visibleTabs = visibleTabs
+                            } else if (showServerSettingsScreen) {
+                                ServerSettingsScreen(
+                                    settingsManager = settingsManager,
+                                    onBack = { showServerSettingsScreen = false }
                                 )
+                            } else {
+                                when (currentNavTab) {
+                                    MainNavTab.LOCAL_LIBRARY -> {
+                                        LibraryScreen(
+                                            librarySongs = librarySongs,
+                                            hiddenVaultSongs = hiddenVaultSongs,
+                                            favoriteSongs = favoriteSongs,
+                                            playlists = playlists,
+                                            currentPlayingSongId = currentSong?.id,
+                                            onSongSelected = { song, playlistContext ->
+                                                PlaybackManager.playSong(song, playlistContext)
+                                            },
+                                            onRescanRequested = {
+                                                coroutineScope.launch {
+                                                    val count = repository.scanLocalAudioLibrary()
+                                                    Toast.makeText(context, "Scanned $count offline songs", Toast.LENGTH_SHORT).show()
+                                                }
+                                            },
+                                            onToggleSoftHide = { targetSong ->
+                                                coroutineScope.launch {
+                                                    val newState = !targetSong.isHiddenFromLibrary
+                                                    repository.setSongHidden(targetSong.id, newState)
+                                                    val msg = if (newState) "Removed from App (Hidden)" else "Restored to Library"
+                                                    Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                                                }
+                                            },
+                                            onToggleFavorite = { targetSong ->
+                                                coroutineScope.launch {
+                                                    repository.toggleFavorite(targetSong.id)
+                                                }
+                                            },
+                                            onDeleteFromStorage = { targetSong ->
+                                                pendingDeleteSong = targetSong
+                                                try {
+                                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                                                        val uriList = listOf(Uri.parse(targetSong.contentUri))
+                                                        val deleteRequest = MediaStore.createDeleteRequest(context.contentResolver, uriList)
+                                                        val request = IntentSenderRequest.Builder(deleteRequest.intentSender).build()
+                                                        deleteRequestLauncher.launch(request)
+                                                    } else {
+                                                        context.contentResolver.delete(Uri.parse(targetSong.contentUri), null, null)
+                                                        coroutineScope.launch {
+                                                            repository.deleteSongPermanently(targetSong.id)
+                                                            Toast.makeText(context, "Deleted from storage", Toast.LENGTH_SHORT).show()
+                                                        }
+                                                    }
+                                                } catch (e: Exception) {
+                                                    coroutineScope.launch {
+                                                        repository.deleteSongPermanently(targetSong.id)
+                                                        Toast.makeText(context, "Deleted track from app", Toast.LENGTH_SHORT).show()
+                                                    }
+                                                }
+                                            },
+                                            onOpenAudioEditor = { targetSong ->
+                                                editingSongForTrim = targetSong
+                                            },
+                                            onCreatePlaylist = { name ->
+                                                coroutineScope.launch {
+                                                    repository.createPlaylist(name)
+                                                    Toast.makeText(context, "Playlist '$name' created", Toast.LENGTH_SHORT).show()
+                                                }
+                                            },
+                                            onAddSongToPlaylist = { playlistId, songId ->
+                                                coroutineScope.launch {
+                                                    repository.addSongToPlaylist(playlistId, songId)
+                                                    Toast.makeText(context, "Added to playlist", Toast.LENGTH_SHORT).show()
+                                                }
+                                            },
+                                            onSelectPlaylist = { selectedPlaylist ->
+                                                coroutineScope.launch {
+                                                    app.database.musicDao().getSongsForPlaylist(selectedPlaylist.playlistId).collect { playlistSongs ->
+                                                        if (playlistSongs.isNotEmpty()) {
+                                                            PlaybackManager.playSong(playlistSongs.first(), playlistSongs)
+                                                        } else {
+                                                            Toast.makeText(context, "Playlist is empty", Toast.LENGTH_SHORT).show()
+                                                        }
+                                                    }
+                                                }
+                                            },
+                                            onRequestSafImport = {
+                                                safLauncher.launch(arrayOf("audio/*"))
+                                            },
+                                            onOpenOnlineSearch = {
+                                                currentNavTab = MainNavTab.ONLINE_EXPLORE
+                                            },
+                                            onOpenSettings = {
+                                                showSettingsScreen = true
+                                            },
+                                            customWallpaperUri = customWallpaperUri,
+                                            wallpaperScrimAlpha = wallpaperScrimAlpha
+                                        )
+                                    }
+                                    MainNavTab.ONLINE_EXPLORE -> {
+                                        OnlineExploreScreen(
+                                            personalizationRepository = personalizationRepository,
+                                            currentPlayingSongId = currentSong?.id,
+                                            onPlayTrack = { song, playlistContext ->
+                                                coroutineScope.launch {
+                                                    repository.insertOnlineTrack(song)
+                                                    PlaybackManager.playSong(song, playlistContext)
+                                                }
+                                            },
+                                            onDownloadTrack = { song ->
+                                                coroutineScope.launch {
+                                                    repository.downloadTrack(song) {
+                                                        Toast.makeText(context, "Downloaded ${song.title} to offline library", Toast.LENGTH_SHORT).show()
+                                                    }
+                                                }
+                                            },
+                                            downloadProgressMap = downloadProgressMap,
+                                            onOpenSpotifySync = { showSpotifyLoginDialog = true },
+                                            onOpenServerSettings = { showServerSettingsScreen = true },
+                                            refreshTrigger = exploreRefreshTrigger
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -331,24 +517,19 @@ class MainActivity : ComponentActivity() {
                     )
                 }
 
-                // Online Music Search Dialog
-                if (showOnlineSearchDialog) {
-                    OnlineSearchDialog(
-                        onDismiss = { showOnlineSearchDialog = false },
-                        onPlayTrack = { song ->
-                            coroutineScope.launch {
-                                repository.insertOnlineTrack(song)
-                                PlaybackManager.playSong(song, listOf(song))
-                            }
-                        },
-                        onDownloadTrack = { song ->
-                            coroutineScope.launch {
-                                repository.downloadTrack(song) {
-                                    Toast.makeText(context, "Downloaded ${song.title} offline", Toast.LENGTH_SHORT).show()
-                                }
-                            }
-                        },
-                        downloadProgressMap = downloadProgressMap
+                // Zero-Client-ID Spotify Login & Sync Sheet
+                if (showSpotifyLoginDialog) {
+                    SpotifyLoginDialog(
+                        spotifyRepository = spotifyRepository,
+                        onDismiss = { showSpotifyLoginDialog = false },
+                        onImportCompleted = { result ->
+                            exploreRefreshTrigger = System.currentTimeMillis()
+                            Toast.makeText(
+                                context,
+                                "Synced ${result.likedSongsCount} liked tracks & ${result.playlistsCount} playlists from Spotify!",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
                     )
                 }
             }

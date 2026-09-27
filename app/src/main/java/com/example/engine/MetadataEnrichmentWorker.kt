@@ -10,6 +10,7 @@ import android.net.Uri
 import android.util.Log
 import com.example.data.MusicDao
 import com.example.data.SongEntity
+import com.example.utils.IndicTransliterator
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -136,7 +137,16 @@ class MetadataEnrichmentWorker(
 
         // 3. Query online LRCLIB API for synced .lrc lyrics if online
         if (isNetworkAvailable && enrichedLyrics.isNullOrBlank()) {
-            enrichedLyrics = fetchLyricsFromLrcLib(song.title, song.artist, song.durationMs / 1000)
+            val fetched = fetchLyricsFromLrcLib(song.title, song.artist, song.durationMs / 1000)
+            if (fetched != null) {
+                val isIndicSong = song.languageScript == "PUNJABI" || song.languageScript == "HINDI_MARATHI" ||
+                        ScriptLanguageDetector.detectScript(song.title, song.artist, song.album) != ScriptLanguageDetector.ScriptType.ENGLISH_OTHER
+                if (isIndicSong && IndicTransliterator.isPureEnglishTranslation(fetched)) {
+                    Log.w(TAG, "Rejected English translation from LRCLIB for Indic song '${song.title}' to enforce Zero Translation Rule")
+                } else {
+                    enrichedLyrics = fetched
+                }
+            }
         }
 
         // 4. Query Deezer public search for 500x500 high-resolution cover art & verified artist
@@ -147,7 +157,14 @@ class MetadataEnrichmentWorker(
             if (genre != null && verifiedGenre.isNullOrBlank()) verifiedGenre = genre
         }
 
-        // 5. Update Room database if any new metadata was retrieved
+        // 5. Enforce Strict Transliteration (Zero Translation Rule):
+        // Convert any Devanagari (Hindi, Marathi) or Gurmukhi (Punjabi) to phonetic Latin alphabet.
+        // Strip any parenthetical English translations to preserve original lyrics as sung.
+        if (!enrichedLyrics.isNullOrBlank()) {
+            enrichedLyrics = IndicTransliterator.transliterateLrc(enrichedLyrics)
+        }
+
+        // 6. Update Room database if any new metadata was retrieved
         if (enrichedLyrics != song.syncedLyrics || enrichedCover != song.coverArtUrl ||
             verifiedArtist != song.verifiedArtist || verifiedGenre != song.genre) {
             musicDao.updateEnrichedMetadata(
@@ -157,7 +174,7 @@ class MetadataEnrichmentWorker(
                 verifiedArtist = verifiedArtist,
                 genre = verifiedGenre
             )
-            Log.d(TAG, "Successfully enriched metadata for: ${song.title}")
+            Log.d(TAG, "Successfully enriched & transliterated metadata for: ${song.title}")
         }
     }
 
@@ -192,7 +209,7 @@ class MetadataEnrichmentWorker(
 
             val request = Request.Builder()
                 .url(url)
-                .header("User-Agent", "AuraMusic/1.0 (Android Music Player)")
+                .header("User-Agent", "PulseMusic/1.0 (Android Music Player)")
                 .build()
 
             httpClient.newCall(request).execute().use { response ->
@@ -219,7 +236,7 @@ class MetadataEnrichmentWorker(
 
             val request = Request.Builder()
                 .url(url)
-                .header("User-Agent", "AuraMusic/1.0")
+                .header("User-Agent", "PulseMusic/1.0")
                 .build()
 
             httpClient.newCall(request).execute().use { response ->

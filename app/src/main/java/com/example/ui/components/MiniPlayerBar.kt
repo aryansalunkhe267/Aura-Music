@@ -42,6 +42,7 @@ import com.example.ui.theme.OneUICardElevated
 import com.example.ui.theme.OneUITextPrimary
 import com.example.ui.theme.OneUITextSecondary
 import com.example.ui.theme.SpotifyGreen
+import com.example.utils.CachedSongArtwork
 import com.example.utils.cleanMetadataString
 
 @Composable
@@ -87,31 +88,13 @@ fun MiniPlayerBar(
                 .padding(horizontal = 14.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Album Art Thumbnail
-            Box(
-                modifier = Modifier
-                    .size(50.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(Color(0xFF222222)),
-                contentAlignment = Alignment.Center
-            ) {
-                val artModel = song.coverArtUrl ?: song.albumArtUri
-                if (artModel != null) {
-                    AsyncImage(
-                        model = artModel,
-                        contentDescription = song.title,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                } else {
-                    Icon(
-                        imageVector = Icons.Default.MusicNote,
-                        contentDescription = null,
-                        tint = NeonMint,
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
-            }
+            // Album Art Thumbnail with memory cache and ID3 fallback
+            CachedSongArtwork(
+                song = song,
+                modifier = Modifier.size(50.dp),
+                shape = RoundedCornerShape(12.dp),
+                placeholderIconSize = 24.dp
+            )
 
             Spacer(modifier = Modifier.width(12.dp))
 

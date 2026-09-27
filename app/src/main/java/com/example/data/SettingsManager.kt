@@ -7,26 +7,73 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.io.File
 
-enum class AppThemeMode {
-    AMOLED_BLACK, DARK, LIGHT, SYSTEM
+/**
+ * High-contrast, premium color schemes required by Pulse Music.
+ */
+enum class AppThemePreset(
+    val displayName: String,
+    val backgroundColorHex: Long,
+    val surfaceColorHex: Long,
+    val cardColorHex: Long,
+    val primaryAccentHex: Long,
+    val secondaryAccentHex: Long,
+    val textColorHex: Long
+) {
+    RADIOACTIVE_GREEN(
+        "Radioactive / Neon Green",
+        0xFF000000, // Pure OLED #000000
+        0xFF080D08,
+        0xFF101910,
+        0xFF39FF14, // Intense #39FF14 accents
+        0xFF00F5D4,
+        0xFFFFFFFF
+    ),
+    CYBERPUNK_MAGENTA(
+        "Cyberpunk Magenta / Cyan",
+        0xFF0A0518,
+        0xFF140D26,
+        0xFF21153E,
+        0xFFFF007F, // Neon Magenta
+        0xFF00F0FF, // Neon Cyan
+        0xFFFFFFFF
+    ),
+    NORDIC_SLATE(
+        "Nordic Slate & Frost White",
+        0xFF13171F,
+        0xFF1C222D,
+        0xFF262E3D,
+        0xFFE2E8F0, // Frost White
+        0xFF94A3B8,
+        0xFFFFFFFF
+    ),
+    AMBER_GOLD(
+        "Amber Gold & Deep Obsidian",
+        0xFF0A0907, // Deep Obsidian
+        0xFF16130E,
+        0xFF231E15,
+        0xFFFFB300, // Amber Gold
+        0xFFFF8F00,
+        0xFFFFFFFF
+    ),
+    SPOTIFY_OLED(
+        "Pulse Classic OLED",
+        0xFF000000,
+        0xFF121212,
+        0xFF1E1E1E,
+        0xFF1DB954,
+        0xFF00F5D4,
+        0xFFFFFFFF
+    )
 }
 
 enum class PlayerUIStyle {
     SPOTIFY_FLUID, SAMSUNG_MINIMALIST
 }
 
-enum class AccentPalette(val displayName: String, val hexColor: Long) {
-    SPOTIFY_GREEN("Spotify Green", 0xFF1DB954),
-    SAMSUNG_BLUE("Samsung Blue", 0xFF2D68C4),
-    VIBRANT_PURPLE("Vibrant Purple", 0xFF9C27B0),
-    NEON_MINT("Neon Mint", 0xFF00F5A0),
-    MONOCHROMATIC("Minimalist Mono", 0xFFE0E0E0)
-}
-
 class SettingsManager(private val context: Context) {
 
     private val prefs: SharedPreferences =
-        context.getSharedPreferences("aura_music_settings", Context.MODE_PRIVATE)
+        context.getSharedPreferences("pulse_music_settings", Context.MODE_PRIVATE)
 
     // Audio & Playback
     private val _bitrate = MutableStateFlow(prefs.getString("bitrate", "320 kbps") ?: "320 kbps")
@@ -38,24 +85,22 @@ class SettingsManager(private val context: Context) {
     private val _sleepTimerRemainingMinutes = MutableStateFlow<Int?>(null)
     val sleepTimerRemainingMinutes: StateFlow<Int?> = _sleepTimerRemainingMinutes.asStateFlow()
 
-    // Personalization & Theming
-    private val _themeMode = MutableStateFlow(
+    // Personalization & Themes
+    private val _themePreset = MutableStateFlow(
         try {
-            AppThemeMode.valueOf(prefs.getString("theme_mode", AppThemeMode.AMOLED_BLACK.name)!!)
+            AppThemePreset.valueOf(prefs.getString("theme_preset", AppThemePreset.RADIOACTIVE_GREEN.name)!!)
         } catch (_: Exception) {
-            AppThemeMode.AMOLED_BLACK
+            AppThemePreset.RADIOACTIVE_GREEN
         }
     )
-    val themeMode: StateFlow<AppThemeMode> = _themeMode.asStateFlow()
+    val themePreset: StateFlow<AppThemePreset> = _themePreset.asStateFlow()
 
-    private val _accentPalette = MutableStateFlow(
-        try {
-            AccentPalette.valueOf(prefs.getString("accent_palette", AccentPalette.SPOTIFY_GREEN.name)!!)
-        } catch (_: Exception) {
-            AccentPalette.SPOTIFY_GREEN
-        }
-    )
-    val accentPalette: StateFlow<AccentPalette> = _accentPalette.asStateFlow()
+    // Custom Wallpaper & Scrim
+    private val _customWallpaperUri = MutableStateFlow(prefs.getString("wallpaper_uri", null))
+    val customWallpaperUri: StateFlow<String?> = _customWallpaperUri.asStateFlow()
+
+    private val _wallpaperScrimAlpha = MutableStateFlow(prefs.getFloat("wallpaper_scrim_alpha", 0.50f))
+    val wallpaperScrimAlpha: StateFlow<Float> = _wallpaperScrimAlpha.asStateFlow()
 
     private val _playerStyle = MutableStateFlow(
         try {
@@ -71,6 +116,18 @@ class SettingsManager(private val context: Context) {
             ?: setOf("Tracks", "Playlists", "Albums", "Artists", "Folders")
     )
     val visibleTabs: StateFlow<Set<String>> = _visibleTabs.asStateFlow()
+
+    // Remote Streaming Provider (Custom Instance Configuration)
+    private val _streamingInstanceUrl = MutableStateFlow(
+        prefs.getString("streaming_instance_url", "https://pipedapi.kavin.rocks/") ?: "https://pipedapi.kavin.rocks/"
+    )
+    val streamingInstanceUrl: StateFlow<String> = _streamingInstanceUrl.asStateFlow()
+
+    fun setStreamingInstanceUrl(url: String) {
+        val sanitized = if (!url.endsWith("/")) "$url/" else url
+        _streamingInstanceUrl.value = sanitized
+        prefs.edit().putString("streaming_instance_url", sanitized).apply()
+    }
 
     // Data & Storage
     private val _downloadOverWifiOnly = MutableStateFlow(prefs.getBoolean("wifi_only", false))
@@ -90,14 +147,20 @@ class SettingsManager(private val context: Context) {
         _sleepTimerRemainingMinutes.value = minutes
     }
 
-    fun setThemeMode(mode: AppThemeMode) {
-        _themeMode.value = mode
-        prefs.edit().putString("theme_mode", mode.name).apply()
+    fun setThemePreset(preset: AppThemePreset) {
+        _themePreset.value = preset
+        prefs.edit().putString("theme_preset", preset.name).apply()
     }
 
-    fun setAccentPalette(palette: AccentPalette) {
-        _accentPalette.value = palette
-        prefs.edit().putString("accent_palette", palette.name).apply()
+    fun setCustomWallpaper(uriString: String?) {
+        _customWallpaperUri.value = uriString
+        prefs.edit().putString("wallpaper_uri", uriString).apply()
+    }
+
+    fun setWallpaperScrimAlpha(alpha: Float) {
+        val clamped = alpha.coerceIn(0.40f, 0.60f)
+        _wallpaperScrimAlpha.value = clamped
+        prefs.edit().putFloat("wallpaper_scrim_alpha", clamped).apply()
     }
 
     fun setPlayerStyle(style: PlayerUIStyle) {
@@ -108,7 +171,7 @@ class SettingsManager(private val context: Context) {
     fun toggleTabVisibility(tabName: String) {
         val current = _visibleTabs.value.toMutableSet()
         if (current.contains(tabName)) {
-            if (current.size > 1) { // Keep at least one tab visible
+            if (current.size > 1) {
                 current.remove(tabName)
             }
         } else {
@@ -123,9 +186,6 @@ class SettingsManager(private val context: Context) {
         prefs.edit().putBoolean("wifi_only", enabled).apply()
     }
 
-    /**
-     * Calculates cache footprint in Megabytes.
-     */
     fun calculateCacheSizeMb(): String {
         return try {
             val cacheDir = context.cacheDir
@@ -137,9 +197,6 @@ class SettingsManager(private val context: Context) {
         }
     }
 
-    /**
-     * Clears image & HTTP cache directory.
-     */
     fun clearCache(): Boolean {
         return try {
             val cacheDir = context.cacheDir

@@ -13,6 +13,10 @@ object LrcParser {
 
     /**
      * Parses a .lrc formatted string into ordered LyricLine objects.
+     * Enforces the ZERO TRANSLATION RULE & TRANSLITERATION REQUIREMENT:
+     * - Discards parenthetical / bracketed English translations (e.g. "(Your love is saffron)").
+     * - Transliterates original Hindi, Punjabi, or Marathi words into standard Latin/English alphabet
+     *   without altering the native tongue (e.g., "Kesariya tera ishq hai piya").
      */
     fun parse(lrcContent: String?): List<LyricLine> {
         if (lrcContent.isNullOrBlank()) return emptyList()
@@ -47,9 +51,13 @@ object LrcParser {
             }
 
             if (timestamps.isNotEmpty()) {
-                val lyricText = trimmed.substring(lastMatchEnd).trim()
-                for (time in timestamps) {
-                    result.add(LyricLine(timeMs = time, text = lyricText))
+                val rawLyricText = trimmed.substring(lastMatchEnd).trim()
+                // Apply strict transliteration & translation-stripping
+                val sanitizedLyric = IndicTransliterator.cleanAndTransliterate(rawLyricText)
+                if (sanitizedLyric.isNotBlank()) {
+                    for (time in timestamps) {
+                        result.add(LyricLine(timeMs = time, text = sanitizedLyric))
+                    }
                 }
             }
         }
@@ -76,20 +84,34 @@ object LrcParser {
     }
 
     /**
-     * Provides fallback demo lyrics with authentic bilingual lines when no .lrc file is loaded.
+     * Provides fallback demo lyrics with strict phonetic transliteration (no English translation).
+     * Preserves original Hindi, Punjabi, and Marathi lyrics in the Latin alphabet.
      */
     fun generateDemoLyrics(title: String, artist: String, durationMs: Long): String {
         val totalSec = (durationMs / 1000L).coerceAtLeast(30L)
         val step = (totalSec / 8).coerceIn(4, 15)
 
+        if (title.contains("295", ignoreCase = true)) {
+            return buildString {
+                appendLine("[00:02.00]♪ Bass & Dhol Intro ♪")
+                appendLine("[00:${String.format("%02d", step)}.00] Nit controversy create milugi")
+                appendLine("[00:${String.format("%02d", step * 2)}.00] Dharma de naam te debate milugi")
+                appendLine("[00:${String.format("%02d", step * 3)}.00] Sach bolenga taan milu 295")
+                appendLine("[00:${String.format("%02d", step * 4)}.00] Je karenga tarakki putt hate milugi")
+                appendLine("[00:${String.format("%02d", step * 5)}.00] Nit controversy create milugi")
+                appendLine("[00:${String.format("%02d", step * 6)}.00] Sach bolenga taan milu 295")
+                appendLine("[00:${String.format("%02d", step * 7)}.00] ♪ Outro Fade ♪")
+            }
+        }
+
         return buildString {
             appendLine("[00:02.00]♪ Instrumental Intro ♪")
             appendLine("[00:${String.format("%02d", step)}.00] $title - $artist")
-            appendLine("[00:${String.format("%02d", step * 2)}.00] ਤੂੰ ਹੀ ਮੇਰਾ ਪਿਆਰ, ਰੂਹ ਦਾ ਸਕੂਨ (Tujh Mein Rab Dikhta Hai)")
-            appendLine("[00:${String.format("%02d", step * 3)}.00] दिल से सुनो ये धड़कन, सुरमई शाम का साया")
-            appendLine("[00:${String.format("%02d", step * 4)}.00] सा रे गा मा पा धा नि सा... संगीत ही जीवन है")
-            appendLine("[00:${String.format("%02d", step * 5)}.00] Every beat resonates through the soul")
-            appendLine("[00:${String.format("%02d", step * 6)}.00] ਹਰ ਸਾਹ ਵਿੱਚ ਤੇਰਾ ਨਾਮ, ਬੇਪਰਵਾਹ ਸੁਰ")
+            appendLine("[00:${String.format("%02d", step * 2)}.00] Tu hi mera pyaar, rooh da sukoon")
+            appendLine("[00:${String.format("%02d", step * 3)}.00] Dil se suno ye dhadkan, surmayi shaam ka saaya")
+            appendLine("[00:${String.format("%02d", step * 4)}.00] Sa re ga ma pa dha ni sa... sangeet hi jeevan hai")
+            appendLine("[00:${String.format("%02d", step * 5)}.00] Kesariya tera ishq hai piya, rang jaaun jo main haath lagaun")
+            appendLine("[00:${String.format("%02d", step * 6)}.00] Har saah vich tera naam, beparwah sur")
             appendLine("[00:${String.format("%02d", step * 7)}.00] ♪ Outro Fade ♪")
         }
     }

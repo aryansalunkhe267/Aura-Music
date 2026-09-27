@@ -1,54 +1,42 @@
 package com.example.ui.theme
 
-import android.os.Build
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
+import com.example.data.AppThemePreset
 
+@Composable
+fun PulseMusicTheme(
+    preset: AppThemePreset = AppThemePreset.RADIOACTIVE_GREEN,
+    content: @Composable () -> Unit
+) {
+    val colorScheme = darkColorScheme(
+        primary = Color(preset.primaryAccentHex),
+        onPrimary = Color.Black,
+        primaryContainer = Color(preset.cardColorHex),
+        onPrimaryContainer = Color(preset.primaryAccentHex),
+        secondary = Color(preset.secondaryAccentHex),
+        onSecondary = Color.Black,
+        surface = Color(preset.surfaceColorHex),
+        onSurface = Color(preset.textColorHex),
+        background = Color(preset.backgroundColorHex),
+        onBackground = Color(preset.textColorHex),
+        surfaceVariant = Color(preset.cardColorHex),
+        onSurfaceVariant = Color(0xFFA0AEC0),
+        outline = Color(preset.primaryAccentHex).copy(alpha = 0.3f)
+    )
 
-private val DarkColorScheme =
-  darkColorScheme(
-    primary = SpotifyGreen,
-    onPrimary = Color.Black,
-    primaryContainer = Color(0xFF1E3A28),
-    onPrimaryContainer = NeonMint,
-    secondary = NeonMint,
-    onSecondary = Color.Black,
-    surface = OneUISurfaceDark,
-    onSurface = OneUITextPrimary,
-    background = OneUIDarkBackground,
-    onBackground = OneUITextPrimary,
-    surfaceVariant = OneUICardElevated,
-    onSurfaceVariant = OneUITextSecondary,
-    outline = OneUICardBorder
-  )
-
-private val LightColorScheme = DarkColorScheme // Premium music players excel in dark OLED mode
-
+    MaterialTheme(
+        colorScheme = colorScheme,
+        typography = Typography,
+        content = content
+    )
+}
 
 @Composable
 fun MyApplicationTheme(
-  darkTheme: Boolean = isSystemInDarkTheme(),
-  // Dynamic color is available on Android 12+
-  dynamicColor: Boolean = true,
-  content: @Composable () -> Unit,
+    content: @Composable () -> Unit
 ) {
-  val colorScheme =
-    when {
-      dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-        val context = LocalContext.current
-        if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-      }
-
-      darkTheme -> DarkColorScheme
-      else -> LightColorScheme
-    }
-
-  MaterialTheme(colorScheme = colorScheme, typography = Typography, content = content)
+    PulseMusicTheme(preset = AppThemePreset.RADIOACTIVE_GREEN, content = content)
 }

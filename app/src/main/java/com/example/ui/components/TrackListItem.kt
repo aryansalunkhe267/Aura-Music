@@ -14,15 +14,22 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ContentCut
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.PlaylistAdd
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -45,12 +52,11 @@ import com.example.ui.theme.OneUICardElevated
 import com.example.ui.theme.OneUISurfaceDark
 import com.example.ui.theme.OneUITextPrimary
 import com.example.ui.theme.OneUITextSecondary
-import com.example.ui.theme.SpotifyGreen
 import com.example.utils.cleanMetadataString
 
 /**
- * Standardized Track List Item displaying sanitized English-only song title and artist
- * without string concatenations or hardcoded subtitles.
+ * Standardized Track List Item with optimistic favorite toggle,
+ * physical deletion (MediaStore.createDeleteRequest), and virtual deletion (Soft-Hide).
  */
 @Composable
 fun TrackListItem(
@@ -61,6 +67,7 @@ fun TrackListItem(
     onClick: () -> Unit,
     onToggleFavorite: (() -> Unit)? = null,
     onToggleSoftHide: (() -> Unit)? = null,
+    onDeleteFromStorage: (() -> Unit)? = null,
     onOpenAudioEditor: (() -> Unit)? = null,
     onAddToPlaylistClick: (() -> Unit)? = null
 ) {
@@ -70,7 +77,7 @@ fun TrackListItem(
         modifier = modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .background(if (isCurrentPlaying) SpotifyGreen.copy(alpha = 0.08f) else Color.Transparent)
+            .background(if (isCurrentPlaying) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else Color.Transparent)
             .padding(horizontal = 16.dp, vertical = 10.dp)
             .testTag("track_list_item_${song.id}"),
         verticalAlignment = Alignment.CenterVertically
@@ -78,14 +85,14 @@ fun TrackListItem(
         // Track number index or animated playing indicator
         if (index != null) {
             Box(
-                modifier = Modifier.width(32.dp),
+                modifier = Modifier.width(30.dp),
                 contentAlignment = Alignment.Center
             ) {
                 if (isCurrentPlaying) {
                     Icon(
                         imageVector = Icons.Default.GraphicEq,
                         contentDescription = "Playing",
-                        tint = SpotifyGreen,
+                        tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(18.dp)
                     )
                 } else {
@@ -123,7 +130,7 @@ fun TrackListItem(
                     Icon(
                         imageVector = Icons.Default.MusicNote,
                         contentDescription = null,
-                        tint = SpotifyGreen.copy(alpha = 0.6f),
+                        tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
                         modifier = Modifier.size(22.dp)
                     )
                 }
@@ -132,13 +139,13 @@ fun TrackListItem(
 
         Spacer(modifier = Modifier.width(12.dp))
 
-        // Title & Artist: strictly clean metadata string without concatenation or subtitles
+        // Title & Artist
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = cleanMetadataString(song.title),
                 fontSize = 14.sp,
                 fontWeight = if (isCurrentPlaying) FontWeight.Bold else FontWeight.SemiBold,
-                color = if (isCurrentPlaying) SpotifyGreen else OneUITextPrimary,
+                color = if (isCurrentPlaying) MaterialTheme.colorScheme.primary else OneUITextPrimary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
@@ -152,7 +159,7 @@ fun TrackListItem(
             )
         }
 
-        // Favorite Heart Button
+        // Favorite Heart Button with optimistic UI
         if (onToggleFavorite != null) {
             IconButton(
                 onClick = onToggleFavorite,
@@ -163,7 +170,7 @@ fun TrackListItem(
                 Icon(
                     imageVector = if (song.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
                     contentDescription = "Favorite",
-                    tint = if (song.isFavorite) Color(0xFFFF4081) else OneUITextSecondary,
+                    tint = if (song.isFavorite) Color(0xFFFF2A6D) else OneUITextSecondary,
                     modifier = Modifier.size(20.dp)
                 )
             }
@@ -178,68 +185,104 @@ fun TrackListItem(
         )
 
         // Dropdown Menu for Actions
-        if (onToggleSoftHide != null || onOpenAudioEditor != null || onAddToPlaylistClick != null) {
-            Box {
-                IconButton(
-                    onClick = { showMenu = true },
-                    modifier = Modifier
-                        .size(40.dp)
-                        .testTag("track_menu_button_${song.id}")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.MoreVert,
-                        contentDescription = "Options",
-                        tint = OneUITextSecondary,
-                        modifier = Modifier.size(20.dp)
+        Box {
+            IconButton(
+                onClick = { showMenu = true },
+                modifier = Modifier
+                    .size(40.dp)
+                    .testTag("track_menu_button_${song.id}")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.MoreVert,
+                    contentDescription = "Options",
+                    tint = OneUITextSecondary,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+
+            DropdownMenu(
+                expanded = showMenu,
+                onDismissRequest = { showMenu = false },
+                modifier = Modifier.background(OneUICardElevated)
+            ) {
+                if (onToggleFavorite != null) {
+                    DropdownMenuItem(
+                        text = { Text(if (song.isFavorite) "Remove from Favorites" else "Add to Favorites", color = OneUITextPrimary) },
+                        onClick = {
+                            onToggleFavorite()
+                            showMenu = false
+                        },
+                        leadingIcon = {
+                            Icon(
+                                if (song.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                                contentDescription = null,
+                                tint = Color(0xFFFF2A6D)
+                            )
+                        }
                     )
                 }
 
-                DropdownMenu(
-                    expanded = showMenu,
-                    onDismissRequest = { showMenu = false },
-                    modifier = Modifier.background(OneUICardElevated)
-                ) {
-                    if (onToggleFavorite != null) {
-                        DropdownMenuItem(
-                            text = { Text(if (song.isFavorite) "Remove from Favorites" else "Add to Favorites", color = OneUITextPrimary) },
-                            onClick = {
-                                onToggleFavorite()
-                                showMenu = false
-                            }
-                        )
-                    }
-                    if (onAddToPlaylistClick != null) {
-                        DropdownMenuItem(
-                            text = { Text("Add to Playlist", color = OneUITextPrimary) },
-                            onClick = {
-                                onAddToPlaylistClick()
-                                showMenu = false
-                            }
-                        )
-                    }
-                    if (onOpenAudioEditor != null) {
-                        DropdownMenuItem(
-                            text = { Text("Trim Audio / Edit Tags", color = OneUITextPrimary) },
-                            onClick = {
-                                onOpenAudioEditor()
-                                showMenu = false
-                            }
-                        )
-                    }
-                    if (onToggleSoftHide != null) {
-                        DropdownMenuItem(
-                            text = {
-                                Text(
-                                    if (song.isHiddenFromLibrary) "Unhide (Restore to Library)" else "Soft-Hide (Playlist Only)",
-                                    color = OneUITextPrimary
-                                )
-                            },
-                            onClick = {
-                                onToggleSoftHide()
-                                showMenu = false
-                            }
-                        )
-                    }
+                if (onAddToPlaylistClick != null) {
+                    DropdownMenuItem(
+                        text = { Text("Add to Playlist", color = OneUITextPrimary) },
+                        onClick = {
+                            onAddToPlaylistClick()
+                            showMenu = false
+                        },
+                        leadingIcon = {
+                            Icon(Icons.Default.PlaylistAdd, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        }
+                    )
+                }
+
+                if (onOpenAudioEditor != null) {
+                    DropdownMenuItem(
+                        text = { Text("Trim Audio / Cutter", color = OneUITextPrimary) },
+                        onClick = {
+                            onOpenAudioEditor()
+                            showMenu = false
+                        },
+                        leadingIcon = {
+                            Icon(Icons.Default.ContentCut, contentDescription = null, tint = OneUITextPrimary)
+                        }
+                    )
+                }
+
+                // Virtual Deletion: Remove from App (Sets isHidden = true)
+                if (onToggleSoftHide != null) {
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                if (song.isHiddenFromLibrary) "Restore to Library" else "Remove from App (Hide)",
+                                color = OneUITextPrimary
+                            )
+                        },
+                        onClick = {
+                            onToggleSoftHide()
+                            showMenu = false
+                        },
+                        leadingIcon = {
+                            Icon(
+                                if (song.isHiddenFromLibrary) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                contentDescription = null,
+                                tint = OneUITextSecondary
+                            )
+                        }
+                    )
+                }
+
+                // Physical Deletion: Delete from Storage (MediaStore.createDeleteRequest)
+                if (onDeleteFromStorage != null) {
+                    DropdownMenuItem(
+                        text = { Text("Delete from Storage", color = Color(0xFFFF453A)) },
+                        onClick = {
+                            onDeleteFromStorage()
+                            showMenu = false
+                        },
+                        leadingIcon = {
+                            Icon(Icons.Default.DeleteForever, contentDescription = null, tint = Color(0xFFFF453A))
+                        }
+                    )
                 }
             }
         }

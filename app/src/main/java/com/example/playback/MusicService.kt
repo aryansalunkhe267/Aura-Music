@@ -16,28 +16,29 @@ import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
-import com.example.AuraMusicApp
 import com.example.MainActivity
+import com.example.PulseMusicApp
 import com.example.R
 import com.example.data.SongEntity
+import com.example.widget.PulseMusicWidget
 
 /**
- * AndroidX MediaSessionService implementation engineered for Samsung One UI & Android 14+ background persistence.
+ * AndroidX MediaSessionService engineered for Samsung One UI & Android 14+ background persistence.
  * Prevents Samsung battery managers from killing the player via persistent foreground sessions and wake locks.
  */
 class MusicService : MediaSessionService() {
 
     private val TAG = "MusicService"
-    private val NOTIFICATION_ID = 2024
+    private val NOTIFICATION_ID = 2026
 
     private var exoPlayer: ExoPlayer? = null
     private var mediaSession: MediaSession? = null
 
     companion object {
-        const val ACTION_PLAY = "com.example.auramusic.ACTION_PLAY"
-        const val ACTION_PAUSE = "com.example.auramusic.ACTION_PAUSE"
-        const val ACTION_NEXT = "com.example.auramusic.ACTION_NEXT"
-        const val ACTION_PREV = "com.example.auramusic.ACTION_PREV"
+        const val ACTION_PLAY = "com.pulse.music.ACTION_PLAY"
+        const val ACTION_PAUSE = "com.pulse.music.ACTION_PAUSE"
+        const val ACTION_NEXT = "com.pulse.music.ACTION_NEXT"
+        const val ACTION_PREV = "com.pulse.music.ACTION_PREV"
     }
 
     override fun onCreate() {
@@ -73,9 +74,16 @@ class MusicService : MediaSessionService() {
         player.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 updateNotification()
+                PulseMusicWidget.notifyWidgetUpdate(this@MusicService)
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
+                updateNotification()
+                PulseMusicWidget.notifyWidgetUpdate(this@MusicService)
+            }
+
+            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                Log.e(TAG, "MusicService ExoPlayer error: ${error.errorCodeName} - ${error.message}", error)
                 updateNotification()
             }
         })
@@ -134,8 +142,8 @@ class MusicService : MediaSessionService() {
     }
 
     private fun buildNotification(song: SongEntity?, isPlaying: Boolean): Notification {
-        val title = song?.title ?: "Aura Music Player"
-        val artist = song?.artist ?: "Offline Premium Audio"
+        val title = song?.title ?: "Pulse Music"
+        val artist = song?.artist ?: "Offline High-Fidelity Audio"
 
         val openAppIntent = PendingIntent.getActivity(
             this,
@@ -173,11 +181,11 @@ class MusicService : MediaSessionService() {
             android.R.drawable.ic_media_play
         }
 
-        val builder = NotificationCompat.Builder(this, AuraMusicApp.PLAYBACK_CHANNEL_ID)
-            .setSmallIcon(R.mipmap.ic_launcher)
+        val builder = NotificationCompat.Builder(this, PulseMusicApp.PLAYBACK_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle(title)
             .setContentText(artist)
-            .setSubText(song?.languageScript?.replace("_", " ") ?: "OFFLINE")
+            .setSubText(song?.languageScript?.replace("_", " ") ?: "PULSE")
             .setContentIntent(openAppIntent)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setOngoing(isPlaying)

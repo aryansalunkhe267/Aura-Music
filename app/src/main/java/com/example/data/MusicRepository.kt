@@ -126,7 +126,86 @@ class MusicRepository(
                     val cleanAlbum = MetadataSanitizer.sanitizeAlbum(rawAlbum)
 
                     val contentUri = ContentUris.withAppendedId(audioUri, id).toString()
-                    val albumArtUri = "content://media/external/audio/albumart/$albumId"
+                    val parsedUri = Uri.parse(contentUri)
+
+                    // 1. Extract embedded picture and ID3 lyrics via MediaMetadataRetriever directly from the local audio file's Uri
+                    var extractedArtUri: String? = null
+                    var extractedLyrics: String? = null
+
+                    val retriever = android.media.MediaMetadataRetriever()
+                    try {
+                        var sourceLoaded = false
+                        try {
+                            retriever.setDataSource(context, parsedUri)
+                            sourceLoaded = true
+                        } catch (_: Exception) {}
+
+                        if (!sourceLoaded) {
+                            try {
+                                context.contentResolver.openFileDescriptor(parsedUri, "r")?.use { pfd ->
+                                    retriever.setDataSource(pfd.fileDescriptor)
+                                    sourceLoaded = true
+                                }
+                            } catch (_: Exception) {}
+                        }
+
+                        if (!sourceLoaded && !dataPath.isNullOrBlank()) {
+                            try {
+                                val f = java.io.File(dataPath)
+                                if (f.exists() && f.canRead()) {
+                                    retriever.setDataSource(dataPath)
+                                    sourceLoaded = true
+                                }
+                            } catch (_: Exception) {}
+                        }
+
+                        if (sourceLoaded) {
+                            // Extract embedded picture byte array via MediaMetadataRetriever.embeddedPicture
+                            val rawPictureBytes = retriever.embeddedPicture
+                            if (rawPictureBytes != null && rawPictureBytes.isNotEmpty()) {
+                                val coversDir = java.io.File(context.filesDir, "album_covers").apply { mkdirs() }
+                                val coverFile = java.io.File(coversDir, "cover_${id}.jpg")
+                                if (!coverFile.exists() || coverFile.length() == 0L) {
+                                    coverFile.writeBytes(rawPictureBytes)
+                                }
+                                extractedArtUri = Uri.fromFile(coverFile).toString()
+                            }
+
+                            // Extract embedded ID3 lyrics directly via MediaMetadataRetriever from the audio file's Uri
+                            // Key 1000 corresponds to METADATA_KEY_LYRICS in Android's media framework
+                            for (key in intArrayOf(1000, 1001, 1002, 1003, 1004, 1005)) {
+                                val text = retriever.extractMetadata(key)
+                                if (!text.isNullOrBlank()) {
+                                    extractedLyrics = text
+                                    break
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.d(TAG, "Retriever metadata extraction for $cleanTitle: ${e.message}")
+                    } finally {
+                        try {
+                            retriever.release()
+                        } catch (_: Exception) {}
+                    }
+
+                    // 2. Fallback to Id3LyricsExtractor for embedded USLT / SYLT frames directly from audio file Uri
+                    if (extractedLyrics.isNullOrBlank()) {
+                        extractedLyrics = com.example.utils.Id3LyricsExtractor.extractEmbeddedLyrics(context, dataPath, contentUri)
+                    }
+
+                    // 3. Cover art resolution: prefer extracted embedded picture byte array file,
+                    // fallback to constructing the correct content://media/external/audio/albumart/{albumId} Uri for Coil
+                    val finalAlbumArtUri = if (!extractedArtUri.isNullOrBlank()) {
+                        extractedArtUri
+                    } else if (albumId > 0) {
+                        ContentUris.withAppendedId(
+                            Uri.parse("content://media/external/audio/albumart"),
+                            albumId
+                        ).toString()
+                    } else {
+                        null
+                    }
 
                     // Script linguistic detection (Devanagari, Gurmukhi, English)
                     val scriptType = ScriptLanguageDetector.detectScript(cleanTitle, cleanArtist, cleanAlbum)
@@ -139,7 +218,8 @@ class MusicRepository(
                             album = cleanAlbum,
                             durationMs = duration,
                             contentUri = contentUri,
-                            albumArtUri = albumArtUri,
+                            albumArtUri = finalAlbumArtUri,
+                            coverArtUrl = finalAlbumArtUri,
                             dataPath = dataPath,
                             dateAdded = dateAdded,
                             size = size,
@@ -147,6 +227,7 @@ class MusicRepository(
                             languageScript = scriptType.tag,
                             moodProfile = "CHILL",
                             moodScore = 0.5f,
+                            lrcLyrics = extractedLyrics,
                             sourceType = "LOCAL",
                             isDownloaded = true,
                             downloadProgress = 100
@@ -173,9 +254,10 @@ class MusicRepository(
                 scanned.copy(
                     isHiddenFromLibrary = existing.isHiddenFromLibrary,
                     isFavorite = existing.isFavorite,
-                    coverArtUrl = existing.coverArtUrl ?: scanned.coverArtUrl,
+                    coverArtUrl = scanned.coverArtUrl ?: existing.coverArtUrl,
+                    albumArtUri = scanned.albumArtUri ?: existing.albumArtUri,
                     syncedLyrics = existing.syncedLyrics ?: scanned.syncedLyrics,
-                    lrcLyrics = existing.lrcLyrics ?: scanned.lrcLyrics,
+                    lrcLyrics = scanned.lrcLyrics ?: existing.lrcLyrics,
                     verifiedArtist = existing.verifiedArtist ?: scanned.verifiedArtist,
                     genre = existing.genre ?: scanned.genre,
                     moodProfile = existing.moodProfile,
@@ -442,19 +524,69 @@ class MusicRepository(
                     }
                 }
 
-                val cleanTitle = MetadataSanitizer.sanitizeTitle(displayName)
-                val cleanArtist = "Imported Track"
-                val scriptType = ScriptLanguageDetector.detectScript(cleanTitle, cleanArtist, "")
+                var cleanTitle = MetadataSanitizer.sanitizeTitle(displayName)
+                var cleanArtist = "Imported Track"
+                var cleanAlbum = "Imported Audio"
+                var duration = 180000L
+                var extractedArtUri: String? = null
+                var extractedLyrics: String? = null
+
                 val uniqueId = System.currentTimeMillis() + (0..9999).random()
+
+                val retriever = android.media.MediaMetadataRetriever()
+                try {
+                    retriever.setDataSource(context, uri)
+                    retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_TITLE)?.takeIf { it.isNotBlank() }?.let {
+                        cleanTitle = MetadataSanitizer.sanitizeTitle(it)
+                    }
+                    retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_ARTIST)?.takeIf { it.isNotBlank() }?.let {
+                        cleanArtist = MetadataSanitizer.sanitizeArtist(it)
+                    }
+                    retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_ALBUM)?.takeIf { it.isNotBlank() }?.let {
+                        cleanAlbum = MetadataSanitizer.sanitizeAlbum(it)
+                    }
+                    retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()?.let {
+                        if (it > 0) duration = it
+                    }
+
+                    val rawPictureBytes = retriever.embeddedPicture
+                    if (rawPictureBytes != null && rawPictureBytes.isNotEmpty()) {
+                        val coversDir = java.io.File(context.filesDir, "album_covers").apply { mkdirs() }
+                        val coverFile = java.io.File(coversDir, "cover_${uniqueId}.jpg")
+                        coverFile.writeBytes(rawPictureBytes)
+                        extractedArtUri = Uri.fromFile(coverFile).toString()
+                    }
+
+                    for (key in intArrayOf(1000, 1001, 1002, 1003, 1004, 1005)) {
+                        val text = retriever.extractMetadata(key)
+                        if (!text.isNullOrBlank()) {
+                            extractedLyrics = text
+                            break
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.d(TAG, "SAF retriever metadata extraction: ${e.message}")
+                } finally {
+                    try { retriever.release() } catch (_: Exception) {}
+                }
+
+                if (extractedLyrics.isNullOrBlank()) {
+                    extractedLyrics = com.example.utils.Id3LyricsExtractor.extractEmbeddedLyrics(context, null, uri.toString())
+                }
+
+                val scriptType = ScriptLanguageDetector.detectScript(cleanTitle, cleanArtist, cleanAlbum)
 
                 val importedSong = SongEntity(
                     id = uniqueId,
                     title = cleanTitle,
                     artist = cleanArtist,
-                    album = "Imported Audio",
-                    durationMs = 180000L,
+                    album = cleanAlbum,
+                    durationMs = duration,
                     contentUri = uri.toString(),
                     dataPath = uri.path,
+                    albumArtUri = extractedArtUri,
+                    coverArtUrl = extractedArtUri,
+                    lrcLyrics = extractedLyrics,
                     size = size,
                     dateAdded = System.currentTimeMillis() / 1000L,
                     isHiddenFromLibrary = false,

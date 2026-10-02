@@ -21,34 +21,129 @@ object Id3LyricsExtractor {
     /**
      * Extracts embedded lyrics from an audio file.
      * Tries:
-     * 1. Direct ID3v2 binary frame inspection (USLT / SYLT)
-     * 2. MediaMetadataRetriever standard fallback
+     * 1. Direct ID3v2 inspection from ContentResolver Uri (works under Scoped Storage)
+     * 2. Direct ID3v2 binary frame inspection from File (USLT / SYLT)
+     * 3. MediaMetadataRetriever standard fallback
      */
     fun extractEmbeddedLyrics(context: Context, dataPath: String?, contentUriString: String?): String? {
-        if (!dataPath.isNullOrBlank()) {
-            val file = File(dataPath)
-            if (file.exists() && file.canRead()) {
-                val id3Lyrics = extractFromMp3File(file)
-                if (!id3Lyrics.isNullOrBlank()) return id3Lyrics
+        // 1. Try reading directly from ContentResolver Uri (works reliably with Scoped Storage)
+        if (!contentUriString.isNullOrBlank() && !contentUriString.startsWith("android.resource://")) {
+            try {
+                val uri = Uri.parse(contentUriString)
+                context.contentResolver.openInputStream(uri)?.use { stream ->
+                    val id3Lyrics = extractFromInputStream(stream)
+                    if (!id3Lyrics.isNullOrBlank()) return id3Lyrics
+                }
+            } catch (e: Exception) {
+                Log.d(TAG, "Error reading ID3 from Uri: ${e.message}")
             }
         }
 
-        // Fallback: MediaMetadataRetriever
+        // 2. Try direct file read if accessible
+        if (!dataPath.isNullOrBlank()) {
+            try {
+                val file = File(dataPath)
+                if (file.exists() && file.canRead()) {
+                    val id3Lyrics = extractFromMp3File(file)
+                    if (!id3Lyrics.isNullOrBlank()) return id3Lyrics
+                }
+            } catch (_: Exception) {}
+        }
+
+        // 3. Fallback: MediaMetadataRetriever
         try {
             val retriever = MediaMetadataRetriever()
-            if (!dataPath.isNullOrBlank() && File(dataPath).exists()) {
-                retriever.setDataSource(dataPath)
-            } else if (!contentUriString.isNullOrBlank() && !contentUriString.startsWith("android.resource://")) {
-                retriever.setDataSource(context, Uri.parse(contentUriString))
-            } else {
+            try {
+                if (!contentUriString.isNullOrBlank() && !contentUriString.startsWith("android.resource://")) {
+                    retriever.setDataSource(context, Uri.parse(contentUriString))
+                } else if (!dataPath.isNullOrBlank() && File(dataPath).exists()) {
+                    retriever.setDataSource(dataPath)
+                } else {
+                    return null
+                }
+
+                // Check custom OEM metadata keys for lyrics
+                for (key in intArrayOf(1000, 1001, 1002, 1003, 1004, 1005)) {
+                    val text = retriever.extractMetadata(key)
+                    if (!text.isNullOrBlank()) return text
+                }
+            } finally {
+                retriever.release()
+            }
+        } catch (_: Exception) {}
+
+        return null
+    }
+
+    fun extractFromInputStream(inputStream: java.io.InputStream): String? {
+        return try {
+            val header = ByteArray(10)
+            var read = 0
+            while (read < 10) {
+                val r = inputStream.read(header, read, 10 - read)
+                if (r == -1) return null
+                read += r
+            }
+            if (header[0] != 'I'.code.toByte() || header[1] != 'D'.code.toByte() || header[2] != '3'.code.toByte()) {
                 return null
             }
 
-            // Some Android devices expose lyrics or commentary via metadata keys
-            val comment = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
-            retriever.release()
-        } catch (_: Exception) {}
+            val majorVersion = header[3].toInt()
+            val tagSize = (header[6].toInt() and 0x7F shl 21) or
+                    (header[7].toInt() and 0x7F shl 14) or
+                    (header[8].toInt() and 0x7F shl 7) or
+                    (header[9].toInt() and 0x7F)
 
+            if (tagSize <= 0 || tagSize > 10 * 1024 * 1024) return null
+
+            val tagBuffer = ByteArray(tagSize)
+            var totalRead = 0
+            while (totalRead < tagSize) {
+                val r = inputStream.read(tagBuffer, totalRead, tagSize - totalRead)
+                if (r == -1) break
+                totalRead += r
+            }
+
+            parseId3TagBuffer(tagBuffer, totalRead, majorVersion)
+        } catch (e: Exception) {
+            Log.d(TAG, "InputStream ID3 parse error: ${e.message}")
+            null
+        }
+    }
+
+    private fun parseId3TagBuffer(buffer: ByteArray, bufferSize: Int, majorVersion: Int): String? {
+        var offset = 0
+        while (offset + 10 <= bufferSize) {
+            val frameId = String(buffer, offset, 4, StandardCharsets.ISO_8859_1)
+            if (frameId.all { it == '\u0000' }) break // Padding reached
+
+            val frameSize = if (majorVersion == 4) {
+                (buffer[offset + 4].toInt() and 0x7F shl 21) or
+                        (buffer[offset + 5].toInt() and 0x7F shl 14) or
+                        (buffer[offset + 6].toInt() and 0x7F shl 7) or
+                        (buffer[offset + 7].toInt() and 0x7F)
+            } else {
+                (buffer[offset + 4].toInt() and 0xFF shl 24) or
+                        (buffer[offset + 5].toInt() and 0xFF shl 16) or
+                        (buffer[offset + 6].toInt() and 0xFF shl 8) or
+                        (buffer[offset + 7].toInt() and 0xFF)
+            }
+
+            offset += 10
+            if (frameSize <= 0 || offset + frameSize > bufferSize) break
+
+            if (frameId == "USLT") {
+                val frameData = buffer.copyOfRange(offset, offset + frameSize)
+                val uslt = parseUsltFrame(frameData)
+                if (!uslt.isNullOrBlank()) return uslt
+            } else if (frameId == "SYLT") {
+                val frameData = buffer.copyOfRange(offset, offset + frameSize)
+                val sylt = parseSyltFrame(frameData)
+                if (!sylt.isNullOrBlank()) return sylt
+            }
+
+            offset += frameSize
+        }
         return null
     }
 

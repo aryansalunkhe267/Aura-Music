@@ -164,13 +164,66 @@ object StreamingApiClient {
     }
 
     /**
-     * Resolves the highest quality audio stream (M4A or Opus) from stream details.
+     * Resolves the highest quality audio stream from stream details.
+     * Strictly filters and prioritizes audio/mp4 (.m4a) streams to prevent ExoPlayer demuxer static/digital noise.
      */
     fun selectBestAudioStream(response: PipedStreamResponse): PipedAudioStream? {
-        val streams = response.audioStreams ?: return null
-        return streams.firstOrNull { it.format?.uppercase() == "M4A" }
-            ?: streams.firstOrNull { it.mimeType?.contains("mp4") == true }
-            ?: streams.firstOrNull { it.format?.uppercase() == "OPUS" }
-            ?: streams.firstOrNull()
+        val streams = response.audioStreams?.filter { !it.url.isNullOrBlank() } ?: return null
+        if (streams.isEmpty()) return null
+
+        // 1. Strictly filter and prioritize audio/mp4 (.m4a) streams.
+        // ExoPlayer's Mp4Extractor demuxes audio/mp4 (AAC/mp4a) cleanly, whereas WebM/Opus streams
+        // without container headers or with mismatched sample rates cause severe digital noise and demuxer failure.
+        val mp4Streams = streams.filter { stream ->
+            val mime = stream.mimeType?.lowercase() ?: ""
+            val format = stream.format?.lowercase() ?: ""
+            val codec = stream.codec?.lowercase() ?: ""
+            val url = stream.url?.lowercase() ?: ""
+
+            val isDisallowedFormat = mime.contains("webm") ||
+                    mime.contains("opus") ||
+                    mime.contains("ogg") ||
+                    format.contains("webm") ||
+                    format.contains("opus") ||
+                    format.contains("ogg") ||
+                    codec.contains("opus")
+
+            if (isDisallowedFormat) return@filter false
+
+            mime.startsWith("audio/mp4") ||
+                    mime.contains("audio/mp4") ||
+                    format == "m4a" ||
+                    codec.startsWith("mp4a") ||
+                    codec.contains("mp4a") ||
+                    url.contains("mime=audio%2fmp4") ||
+                    url.contains("mime=audio/mp4")
+        }
+
+        if (mp4Streams.isNotEmpty()) {
+            return mp4Streams.maxByOrNull { it.bitrate ?: 0 } ?: mp4Streams.first()
+        }
+
+        // 2. Strict secondary fallback: AAC streams that are not WebM/Opus/Ogg
+        val safeAacStreams = streams.filter { stream ->
+            val mime = stream.mimeType?.lowercase() ?: ""
+            val format = stream.format?.lowercase() ?: ""
+            val codec = stream.codec?.lowercase() ?: ""
+            val isDisallowedFormat = mime.contains("webm") ||
+                    mime.contains("opus") ||
+                    mime.contains("ogg") ||
+                    format.contains("webm") ||
+                    format.contains("opus") ||
+                    format.contains("ogg") ||
+                    codec.contains("opus")
+
+            !isDisallowedFormat && (mime.contains("aac") || format.contains("aac") || codec.contains("aac"))
+        }
+
+        if (safeAacStreams.isNotEmpty()) {
+            return safeAacStreams.maxByOrNull { it.bitrate ?: 0 } ?: safeAacStreams.first()
+        }
+
+        // Strictly do not fall back to WebM/Opus streams that cause demuxer static
+        return null
     }
 }

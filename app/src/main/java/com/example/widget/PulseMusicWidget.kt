@@ -51,37 +51,78 @@ import kotlinx.coroutines.launch
 class PulseMusicWidget : GlanceAppWidget() {
 
     companion object {
-        fun notifyWidgetUpdate(context: Context) {
-            CoroutineScope(Dispatchers.IO).launch {
-                try {
-                    val manager = GlanceAppWidgetManager(context)
-                    val glanceIds = manager.getGlanceIds(PulseMusicWidget::class.java)
-                    for (glanceId in glanceIds) {
-                        PulseMusicWidget().update(context, glanceId)
+        const val PREFS_NAME = "pulse_music_widget_prefs"
+        const val KEY_IS_PLAYING = "is_playing"
+        const val KEY_TITLE = "last_title"
+        const val KEY_ARTIST = "last_artist"
+        const val KEY_ART_URI = "last_art_uri"
+        const val KEY_SONG_ID = "last_song_id"
+
+        fun notifyWidgetUpdate(context: Context, isPlayingOverride: Boolean? = null) {
+            try {
+                val actualIsPlaying = isPlayingOverride ?: PlaybackManager.isPlayerPlaying()
+                val song = PlaybackManager.currentSong.value
+                val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                prefs.edit().apply {
+                    putBoolean(KEY_IS_PLAYING, actualIsPlaying)
+                    if (song != null) {
+                        putLong(KEY_SONG_ID, song.id)
+                        putString(KEY_TITLE, song.title)
+                        putString(KEY_ARTIST, song.artist)
+                        putString(KEY_ART_URI, song.coverArtUrl ?: song.albumArtUri ?: "")
                     }
-                } catch (_: Exception) {}
+                    commit()
+                }
+
+                CoroutineScope(Dispatchers.IO).launch {
+                    try {
+                        val manager = GlanceAppWidgetManager(context)
+                        val glanceIds = manager.getGlanceIds(PulseMusicWidget::class.java)
+                        for (glanceId in glanceIds) {
+                            PulseMusicWidget().update(context, glanceId)
+                        }
+                    } catch (e: Exception) {
+                        android.util.Log.e("PulseMusicWidget", "Failed updating glance widget: ${e.message}")
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("PulseMusicWidget", "notifyWidgetUpdate error: ${e.message}")
             }
         }
     }
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         provideContent {
+            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             val song = PlaybackManager.currentSong.value
-            val isPlaying = PlaybackManager.isPlaying.value
 
-            val title = song?.title ?: "Pulse Music"
-            val artist = song?.artist ?: "Tap to play your library"
+            // Determine accurate playback state: player -> PlaybackManager -> stored persistent prefs
+            val isPlaying = if (PlaybackManager.getPlayer() != null) {
+                PlaybackManager.isPlayerPlaying()
+            } else if (song != null) {
+                PlaybackManager.isPlaying.value
+            } else {
+                prefs.getBoolean(KEY_IS_PLAYING, false)
+            }
+
+            val title = song?.title ?: prefs.getString(KEY_TITLE, null) ?: "Pulse Music"
+            val artist = song?.artist ?: prefs.getString(KEY_ARTIST, null) ?: "Tap to play your library"
+            val artUri = song?.coverArtUrl ?: song?.albumArtUri ?: prefs.getString(KEY_ART_URI, null)
 
             val openAppIntent = Intent(context, MainActivity::class.java)
 
+            // Explicit Foreground Service intents to ensure Android 12+ / 14+ wakes the service without background execution limits
             val playPauseIntent = Intent(context, MusicService::class.java).apply {
-                action = if (isPlaying) MusicService.ACTION_PAUSE else MusicService.ACTION_PLAY
+                action = MusicService.ACTION_PLAY_PAUSE
+                setPackage(context.packageName)
             }
             val prevIntent = Intent(context, MusicService::class.java).apply {
                 action = MusicService.ACTION_PREV
+                setPackage(context.packageName)
             }
             val nextIntent = Intent(context, MusicService::class.java).apply {
                 action = MusicService.ACTION_NEXT
+                setPackage(context.packageName)
             }
 
             // Samsung One UI 24.dp rounded surface card
@@ -106,11 +147,18 @@ class PulseMusicWidget : GlanceAppWidget() {
                         contentAlignment = Alignment.Center
                     ) {
                         var loadedBitmap: Bitmap? = null
-                        if (song != null && !song.albumArtUri.isNullOrBlank()) {
+                        if (!artUri.isNullOrBlank()) {
                             try {
-                                val uri = Uri.parse(song.albumArtUri)
-                                context.contentResolver.openInputStream(uri)?.use { stream ->
-                                    loadedBitmap = BitmapFactory.decodeStream(stream)
+                                val uri = Uri.parse(artUri)
+                                if (uri.scheme == "file") {
+                                    val file = java.io.File(uri.path ?: "")
+                                    if (file.exists()) {
+                                        loadedBitmap = BitmapFactory.decodeFile(file.absolutePath)
+                                    }
+                                } else {
+                                    context.contentResolver.openInputStream(uri)?.use { stream ->
+                                        loadedBitmap = BitmapFactory.decodeStream(stream)
+                                    }
                                 }
                             } catch (_: Exception) {}
                         }
@@ -168,7 +216,7 @@ class PulseMusicWidget : GlanceAppWidget() {
                             modifier = GlanceModifier
                                 .size(38.dp)
                                 .cornerRadius(19.dp)
-                                .clickable(actionStartService(prevIntent)),
+                                .clickable(actionStartService(prevIntent, isForegroundService = true)),
                             contentAlignment = Alignment.Center
                         ) {
                             Image(
@@ -186,7 +234,7 @@ class PulseMusicWidget : GlanceAppWidget() {
                                 .size(44.dp)
                                 .cornerRadius(22.dp)
                                 .background(ColorProvider(Color(0xFF1DB954)))
-                                .clickable(actionStartService(playPauseIntent)),
+                                .clickable(actionStartService(playPauseIntent, isForegroundService = true)),
                             contentAlignment = Alignment.Center
                         ) {
                             Image(
@@ -205,7 +253,7 @@ class PulseMusicWidget : GlanceAppWidget() {
                             modifier = GlanceModifier
                                 .size(38.dp)
                                 .cornerRadius(19.dp)
-                                .clickable(actionStartService(nextIntent)),
+                                .clickable(actionStartService(nextIntent, isForegroundService = true)),
                             contentAlignment = Alignment.Center
                         ) {
                             Image(

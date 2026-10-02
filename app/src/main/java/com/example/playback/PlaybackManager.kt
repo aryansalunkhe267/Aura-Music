@@ -49,6 +49,9 @@ object PlaybackManager {
 
     // Internal ExoPlayer reference
     private var exoPlayer: ExoPlayer? = null
+
+    fun isPlayerPlaying(): Boolean = exoPlayer?.isPlaying ?: _isPlaying.value
+
     private var progressJob: Job? = null
     private var pendingPlaySong: SongEntity? = null
     private var pendingPlayQueue: List<SongEntity>? = null
@@ -477,11 +480,17 @@ object PlaybackManager {
                     .setArtworkUri(playSong.albumArtUri?.let { Uri.parse(it) } ?: playSong.coverArtUrl?.let { Uri.parse(it) })
                     .build()
 
-                val mediaItem = MediaItem.Builder()
+                val mediaItemBuilder = MediaItem.Builder()
                     .setMediaId(playSong.id.toString())
                     .setUri(playUri)
                     .setMediaMetadata(metadata)
-                    .build()
+
+                val uriStr = playUri.toString().lowercase()
+                if (uriStr.contains(".m4a") || uriStr.contains("mime=audio%2fmp4") || uriStr.contains("mime=audio/mp4") || playSong.sourceType == "ONLINE") {
+                    mediaItemBuilder.setMimeType(androidx.media3.common.MimeTypes.AUDIO_MP4)
+                }
+
+                val mediaItem = mediaItemBuilder.build()
 
                 player.setMediaItem(mediaItem)
                 player.prepare()

@@ -2,6 +2,7 @@ package com.example.playback
 
 import android.app.Notification
 import android.app.PendingIntent
+import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
@@ -21,6 +22,10 @@ import com.example.PulseMusicApp
 import com.example.R
 import com.example.data.SongEntity
 import com.example.widget.PulseMusicWidget
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.firstOrNull
+import kotlinx.coroutines.launch
 
 /**
  * AndroidX MediaSessionService engineered for Samsung One UI & Android 14+ background persistence.
@@ -37,6 +42,7 @@ class MusicService : MediaSessionService() {
     companion object {
         const val ACTION_PLAY = "com.pulse.music.ACTION_PLAY"
         const val ACTION_PAUSE = "com.pulse.music.ACTION_PAUSE"
+        const val ACTION_PLAY_PAUSE = "com.pulse.music.ACTION_PLAY_PAUSE"
         const val ACTION_NEXT = "com.pulse.music.ACTION_NEXT"
         const val ACTION_PREV = "com.pulse.music.ACTION_PREV"
     }
@@ -71,24 +77,31 @@ class MusicService : MediaSessionService() {
 
         PlaybackManager.attachPlayer(player)
 
+        // Player.Listener triggers widget update whenever onIsPlayingChanged fires
         player.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 updateNotification()
-                PulseMusicWidget.notifyWidgetUpdate(this@MusicService)
+                PulseMusicWidget.notifyWidgetUpdate(this@MusicService, isPlaying)
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
                 updateNotification()
-                PulseMusicWidget.notifyWidgetUpdate(this@MusicService)
+                PulseMusicWidget.notifyWidgetUpdate(this@MusicService, player.isPlaying)
+            }
+
+            override fun onMediaItemTransition(mediaItem: androidx.media3.common.MediaItem?, reason: Int) {
+                updateNotification()
+                PulseMusicWidget.notifyWidgetUpdate(this@MusicService, player.isPlaying)
             }
 
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
                 Log.e(TAG, "MusicService ExoPlayer error: ${error.errorCodeName} - ${error.message}", error)
                 updateNotification()
+                PulseMusicWidget.notifyWidgetUpdate(this@MusicService, false)
             }
         })
 
-        // Initial foreground notification to lock service against Samsung One UI aggressive app sleep
+        // Initial foreground notification to lock service against aggressive OS app sleep
         val initialNotification = buildNotification(PlaybackManager.currentSong.value, false)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(
@@ -103,12 +116,68 @@ class MusicService : MediaSessionService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_PLAY -> PlaybackManager.playPause()
-            ACTION_PAUSE -> PlaybackManager.playPause()
+            ACTION_PLAY -> handlePlayAction()
+            ACTION_PAUSE -> handlePauseAction()
+            ACTION_PLAY_PAUSE, Intent.ACTION_MEDIA_BUTTON -> handlePlayPauseAction()
             ACTION_NEXT -> PlaybackManager.playNext()
             ACTION_PREV -> PlaybackManager.playPrevious()
         }
         return super.onStartCommand(intent, flags, startId)
+    }
+
+    private fun handlePlayPauseAction() {
+        val player = exoPlayer
+        if (player != null && player.mediaItemCount > 0 && PlaybackManager.currentSong.value != null) {
+            PlaybackManager.playPause()
+        } else {
+            startPlaybackFromLibrary()
+        }
+    }
+
+    private fun handlePlayAction() {
+        val player = exoPlayer
+        if (player != null && player.mediaItemCount > 0 && PlaybackManager.currentSong.value != null) {
+            if (!player.isPlaying) {
+                PlaybackManager.playPause()
+            }
+        } else {
+            startPlaybackFromLibrary()
+        }
+    }
+
+    private fun handlePauseAction() {
+        val player = exoPlayer
+        if (player != null && player.isPlaying) {
+            PlaybackManager.playPause()
+        }
+    }
+
+    private fun startPlaybackFromLibrary() {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val app = applicationContext as? PulseMusicApp ?: PulseMusicApp.instance
+                var library = app.repository.librarySongs.firstOrNull()?.ifEmpty { null }
+                    ?: app.database.musicDao().getAllSongsUnlimited()
+
+                if (library.isEmpty()) {
+                    app.repository.scanLocalAudioLibrary()
+                    library = app.database.musicDao().getAllSongsUnlimited()
+                }
+
+                if (library.isNotEmpty()) {
+                    val prefs = getSharedPreferences(PulseMusicWidget.PREFS_NAME, Context.MODE_PRIVATE)
+                    val lastSongId = prefs.getLong(PulseMusicWidget.KEY_SONG_ID, -1L)
+                    val targetSong = if (lastSongId != -1L) {
+                        library.firstOrNull { it.id == lastSongId } ?: library.first()
+                    } else {
+                        library.first()
+                    }
+                    PlaybackManager.playSong(targetSong, library)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error starting playback from library when waking app: ${e.message}", e)
+            }
+        }
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? {
@@ -123,6 +192,7 @@ class MusicService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        PulseMusicWidget.notifyWidgetUpdate(this, isPlayingOverride = false)
         PlaybackManager.detachPlayer()
         mediaSession?.run {
             player.release()

@@ -77,19 +77,36 @@ object AlbumArtLoader {
         val cached = memoryCache.get(cacheKey)
         if (cached != null) return@withContext cached
 
-        // 1. Try embedded picture via MediaMetadataRetriever
+        // 1. Try embedded picture via MediaMetadataRetriever directly from audio file Uri
         var decodedBitmap: Bitmap? = null
         val retriever = MediaMetadataRetriever()
 
         try {
-            if (!song.dataPath.isNullOrBlank() && File(song.dataPath).exists()) {
-                retriever.setDataSource(song.dataPath)
-                val rawBytes = retriever.embeddedPicture
-                if (rawBytes != null && rawBytes.isNotEmpty()) {
-                    decodedBitmap = decodeSampledBitmapFromByteArray(rawBytes, 400, 400)
+            var sourceLoaded = false
+            if (!song.contentUri.isNullOrBlank() && !song.contentUri.startsWith("android.resource://")) {
+                try {
+                    retriever.setDataSource(context, Uri.parse(song.contentUri))
+                    sourceLoaded = true
+                } catch (_: Exception) {}
+
+                if (!sourceLoaded) {
+                    try {
+                        context.contentResolver.openFileDescriptor(Uri.parse(song.contentUri), "r")?.use { pfd ->
+                            retriever.setDataSource(pfd.fileDescriptor)
+                            sourceLoaded = true
+                        }
+                    } catch (_: Exception) {}
                 }
-            } else if (!song.contentUri.isNullOrBlank() && !song.contentUri.startsWith("android.resource://")) {
-                retriever.setDataSource(context, Uri.parse(song.contentUri))
+            }
+
+            if (!sourceLoaded && !song.dataPath.isNullOrBlank() && File(song.dataPath).exists()) {
+                try {
+                    retriever.setDataSource(song.dataPath)
+                    sourceLoaded = true
+                } catch (_: Exception) {}
+            }
+
+            if (sourceLoaded) {
                 val rawBytes = retriever.embeddedPicture
                 if (rawBytes != null && rawBytes.isNotEmpty()) {
                     decodedBitmap = decodeSampledBitmapFromByteArray(rawBytes, 400, 400)
@@ -205,8 +222,10 @@ fun CachedSongArtwork(
         mutableStateOf(AlbumArtLoader.getCachedBitmap(cacheKey))
     }
 
+    val artModel = song.coverArtUrl ?: song.albumArtUri
+
     LaunchedEffect(song.id, song.albumArtUri, song.coverArtUrl) {
-        if (bitmap == null && song.coverArtUrl.isNullOrBlank()) {
+        if (bitmap == null && artModel.isNullOrBlank()) {
             bitmap = AlbumArtLoader.loadArtwork(context, song)
         }
     }
@@ -217,9 +236,9 @@ fun CachedSongArtwork(
             .background(OneUISurfaceDark),
         contentAlignment = Alignment.Center
     ) {
-        if (!song.coverArtUrl.isNullOrBlank()) {
+        if (!artModel.isNullOrBlank()) {
             AsyncImage(
-                model = song.coverArtUrl,
+                model = artModel,
                 contentDescription = "Cover Art",
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()

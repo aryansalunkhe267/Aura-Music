@@ -2,7 +2,6 @@ package com.example.ui.screens
 
 import android.widget.Toast
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -14,14 +13,18 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Dns
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Restore
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ElectricBolt
+import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.Headphones
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -30,9 +33,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -43,12 +43,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.api.StreamingApiClient
 import com.example.data.SettingsManager
 import com.example.ui.theme.OneUICardElevated
@@ -56,9 +56,7 @@ import com.example.ui.theme.OneUIDarkBackground
 import com.example.ui.theme.OneUISurfaceDark
 import com.example.ui.theme.OneUITextPrimary
 import com.example.ui.theme.OneUITextSecondary
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 @Composable
 fun ServerSettingsScreen(
@@ -68,39 +66,43 @@ fun ServerSettingsScreen(
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
-    val activeUrl by settingsManager.streamingInstanceUrl.collectAsStateWithLifecycle()
 
-    var inputUrl by remember(activeUrl) { mutableStateOf(activeUrl) }
-    var isTestingConnection by remember { mutableStateOf(false) }
-    var testStatusMessage by remember { mutableStateOf<String?>(null) }
-    var testIsSuccessful by remember { mutableStateOf<Boolean?>(null) }
+    var isTestingEngine by remember { mutableStateOf(false) }
+    var testResultStatus by remember { mutableStateOf<String?>(null) }
+    var testSucceeded by remember { mutableStateOf<Boolean?>(null) }
 
-    fun testAndSave(urlToTest: String) {
-        val sanitized = if (!urlToTest.endsWith("/")) "$urlToTest/" else urlToTest
-        isTestingConnection = true
-        testStatusMessage = "Testing instance connectivity..."
-        testIsSuccessful = null
+    fun testDirectExtraction() {
+        isTestingEngine = true
+        testResultStatus = "Running in-app extraction test..."
+        testSucceeded = null
 
         coroutineScope.launch {
             try {
-                StreamingApiClient.customBaseUrl = sanitized
-                val response = withContext(Dispatchers.IO) {
-                    StreamingApiClient.api.searchSongs("lofi", filter = "music_songs")
-                }
-                if (response.isSuccessful && response.body() != null) {
-                    settingsManager.setStreamingInstanceUrl(sanitized)
-                    testIsSuccessful = true
-                    testStatusMessage = "Connected successfully to instance!"
-                    Toast.makeText(context, "Active streaming instance updated", Toast.LENGTH_SHORT).show()
+                val results = StreamingApiClient.searchSongs("lofi hip hop")
+                if (results.isNotEmpty()) {
+                    val firstTrack = results.first()
+                    val directStream = StreamingApiClient.extractDirectStream(
+                        songOrUrl = firstTrack.contentUri,
+                        fallbackTitle = firstTrack.title,
+                        fallbackArtist = firstTrack.artist
+                    )
+                    if (directStream != null && directStream.streamUrl.isNotBlank()) {
+                        testSucceeded = true
+                        testResultStatus = "Success! Direct m4a stream extracted (${results.size} tracks indexed)."
+                        Toast.makeText(context, "Direct extraction verified!", Toast.LENGTH_SHORT).show()
+                    } else {
+                        testSucceeded = false
+                        testResultStatus = "Found ${results.size} tracks, but stream extraction returned null."
+                    }
                 } else {
-                    testIsSuccessful = false
-                    testStatusMessage = "Instance responded with HTTP ${response.code()}"
+                    testSucceeded = false
+                    testResultStatus = "Search returned 0 items. Check internet connection."
                 }
             } catch (e: Exception) {
-                testIsSuccessful = false
-                testStatusMessage = "Connection failed: ${e.localizedMessage ?: "Unknown error"}"
+                testSucceeded = false
+                testResultStatus = "Test failed: ${e.localizedMessage ?: "Unknown error"}"
             } finally {
-                isTestingConnection = false
+                isTestingEngine = false
             }
         }
     }
@@ -130,13 +132,13 @@ fun ServerSettingsScreen(
             Spacer(modifier = Modifier.width(8.dp))
             Column {
                 Text(
-                    text = "Streaming Provider Settings",
+                    text = "Streaming Engine",
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Bold,
                     color = OneUITextPrimary
                 )
                 Text(
-                    text = "Configure open-source Piped/Invidious instance",
+                    text = "Direct In-App Extraction (NewPipeExtractor)",
                     fontSize = 12.sp,
                     color = OneUITextSecondary
                 )
@@ -145,7 +147,7 @@ fun ServerSettingsScreen(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // Active Instance Card
+        // Active Architecture Card
         Card(
             shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = OneUICardElevated),
@@ -153,189 +155,190 @@ fun ServerSettingsScreen(
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp)
         ) {
-            Column(modifier = Modifier.padding(16.dp)) {
+            Column(modifier = Modifier.padding(18.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Default.Dns,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(24.dp)
-                    )
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Text(
-                        text = "Active API Base URL",
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = OneUITextPrimary
-                    )
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.18f), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ElectricBolt,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text(
+                            text = "Direct Media Extraction",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = OneUITextPrimary
+                        )
+                        Text(
+                            text = "Zero Intermediary Server Proxies",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
                 }
 
-                Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(14.dp))
 
                 Text(
-                    text = activeUrl,
+                    text = "Pulse Music uses native in-app extraction via NewPipeExtractor (v0.26.5). External Piped and Invidious proxy dependencies have been dropped. Audio streams and synchronized captions resolve natively on your device without middleman server bottlenecks.",
                     fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.primary
-                )
-
-                Spacer(modifier = Modifier.height(4.dp))
-
-                Text(
-                    text = "All music searches, streaming metadata, and audio stream extraction route through this endpoint without requiring API keys.",
-                    fontSize = 12.sp,
                     color = OneUITextSecondary,
-                    lineHeight = 16.sp
+                    lineHeight = 18.sp
                 )
             }
         }
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Custom URL Input
-        Card(
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = OneUICardElevated),
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp)
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text(
-                    text = "Custom Instance URL",
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = OneUITextPrimary
-                )
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                OutlinedTextField(
-                    value = inputUrl,
-                    onValueChange = { inputUrl = it },
-                    placeholder = { Text("https://your-instance.com/", fontSize = 13.sp) },
-                    singleLine = true,
-                    shape = RoundedCornerShape(12.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = OneUISurfaceDark,
-                        unfocusedContainerColor = OneUISurfaceDark,
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = Color.Transparent,
-                        focusedTextColor = OneUITextPrimary,
-                        unfocusedTextColor = OneUITextPrimary
-                    ),
-                    modifier = Modifier.fillMaxWidth().testTag("custom_instance_input")
-                )
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Button(
-                        onClick = { testAndSave(inputUrl.trim()) },
-                        enabled = !isTestingConnection && inputUrl.isNotBlank(),
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                        shape = RoundedCornerShape(10.dp),
-                        modifier = Modifier.weight(1f).testTag("save_instance_btn")
-                    ) {
-                        if (isTestingConnection) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(16.dp),
-                                color = Color.Black,
-                                strokeWidth = 2.dp
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                        }
-                        Text("Test & Save", color = Color.Black, fontWeight = FontWeight.Bold)
-                    }
-
-                    Button(
-                        onClick = {
-                            val defaultUrl = StreamingApiClient.DEFAULT_INSTANCES.first()
-                            inputUrl = defaultUrl
-                            testAndSave(defaultUrl)
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = OneUISurfaceDark),
-                        shape = RoundedCornerShape(10.dp)
-                    ) {
-                        Icon(Icons.Default.Restore, contentDescription = "Default", tint = OneUITextPrimary, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Default", color = OneUITextPrimary)
-                    }
-                }
-
-                // Status feedback
-                testStatusMessage?.let { msg ->
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = msg,
-                        fontSize = 12.sp,
-                        color = when (testIsSuccessful) {
-                            true -> MaterialTheme.colorScheme.primary
-                            false -> Color.Red
-                            else -> OneUITextSecondary
-                        }
-                    )
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Known Public Instances List
+        // Engine Highlights
         Text(
-            text = "PRESET PUBLIC INSTANCES",
+            text = "ENGINE CAPABILITIES",
             fontSize = 12.sp,
             fontWeight = FontWeight.Bold,
             color = OneUITextSecondary,
             modifier = Modifier.padding(horizontal = 24.dp, vertical = 6.dp)
         )
 
-        StreamingApiClient.DEFAULT_INSTANCES.forEach { presetUrl ->
-            val isSelected = activeUrl == presetUrl
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = if (isSelected) OneUISurfaceDark else OneUICardElevated,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 4.dp)
-                    .clickable {
-                        inputUrl = presetUrl
-                        testAndSave(presetUrl)
-                    }
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(14.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = presetUrl,
-                            fontSize = 13.sp,
-                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                            color = if (isSelected) MaterialTheme.colorScheme.primary else OneUITextPrimary
-                        )
-                        Text(
-                            text = if (presetUrl.contains("kavin")) "Official primary instance" else "Public mirror node",
-                            fontSize = 11.sp,
-                            color = OneUITextSecondary
-                        )
-                    }
+        EngineFeatureItem(
+            icon = Icons.Default.Headphones,
+            title = "Strict High-Quality M4A / AAC Stream Filtering",
+            subtitle = "ExoPlayer demuxer static bug eliminated. Prioritizes pure audio/mp4 (AAC) streams."
+        )
 
-                    if (isSelected) {
-                        Icon(
-                            imageVector = Icons.Default.Check,
-                            contentDescription = "Selected",
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(20.dp)
+        EngineFeatureItem(
+            icon = Icons.Default.Subtitles,
+            title = "Real-Time Timed Captions & Synced Lyrics",
+            subtitle = "Converts YouTube WebVTT, TTML, and XML captions to standard .lrc format, backed by LRCLIB."
+        )
+
+        EngineFeatureItem(
+            icon = Icons.Default.Security,
+            title = "Decentralized & Resilient",
+            subtitle = "No custom instance configurations required. Immune to public Piped instance downtimes."
+        )
+
+        Spacer(modifier = Modifier.height(20.dp))
+
+        // Test Engine Card
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = OneUICardElevated),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+        ) {
+            Column(modifier = Modifier.padding(18.dp)) {
+                Text(
+                    text = "Self-Diagnostics",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = OneUITextPrimary
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "Verify that native extraction and direct m4a stream resolution are functioning properly.",
+                    fontSize = 12.sp,
+                    color = OneUITextSecondary
+                )
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                Button(
+                    onClick = { testDirectExtraction() },
+                    enabled = !isTestingEngine,
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth().testTag("test_engine_btn")
+                ) {
+                    if (isTestingEngine) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            color = Color.Black,
+                            strokeWidth = 2.dp
                         )
+                        Spacer(modifier = Modifier.width(8.dp))
+                    } else {
+                        Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.Black, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
                     }
+                    Text(
+                        text = if (isTestingEngine) "Testing Extractor..." else "Run Extraction Diagnostic",
+                        color = Color.Black,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
+
+                testResultStatus?.let { status ->
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        text = status,
+                        fontSize = 12.sp,
+                        color = when (testSucceeded) {
+                            true -> MaterialTheme.colorScheme.primary
+                            false -> Color(0xFFFF5252)
+                            else -> OneUITextSecondary
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun Box(modifier: Modifier, contentAlignment: Alignment, content: @Composable () -> Unit) {
+    androidx.compose.foundation.layout.Box(modifier = modifier, contentAlignment = contentAlignment) {
+        content()
+    }
+}
+
+@Composable
+private fun EngineFeatureItem(
+    icon: ImageVector,
+    title: String,
+    subtitle: String
+) {
+    Card(
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = OneUISurfaceDark),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 5.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(24.dp)
+            )
+            Spacer(modifier = Modifier.width(14.dp))
+            Column {
+                Text(
+                    text = title,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = OneUITextPrimary
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = subtitle,
+                    fontSize = 11.sp,
+                    color = OneUITextSecondary,
+                    lineHeight = 15.sp
+                )
             }
         }
     }

@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.FileOpen
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -83,6 +84,25 @@ fun SyncedLyricsView(
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     var showEditLyricsDialog by remember { mutableStateOf(false) }
+    var isFetchingOnlineLyrics by remember { mutableStateOf(false) }
+
+    // Auto-enrich synced lyrics online if empty
+    LaunchedEffect(songTitle, songArtist, lyricsLines.isEmpty()) {
+        if (lyricsLines.isEmpty() && songTitle.isNotBlank()) {
+            isFetchingOnlineLyrics = true
+            try {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    val onlineLrc = com.example.data.OnlineMusicCatalog.fetchSyncedLyrics(songTitle, songArtist)
+                    if (!onlineLrc.isNullOrBlank()) {
+                        onSaveCustomLyrics(onlineLrc)
+                    }
+                }
+            } catch (_: Exception) {
+            } finally {
+                isFetchingOnlineLyrics = false
+            }
+        }
+    }
 
     // SAF File Picker for local .lrc file
     val lrcPickerLauncher = rememberLauncherForActivityResult(
@@ -115,41 +135,78 @@ fun SyncedLyricsView(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
-                Icon(
-                    imageVector = Icons.Default.Description,
-                    contentDescription = null,
-                    tint = Color.White.copy(alpha = 0.35f),
-                    modifier = Modifier.size(54.dp)
-                )
-                Spacer(modifier = Modifier.height(16.dp))
-                Text(
-                    text = "Lyrics not available offline",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White.copy(alpha = 0.85f),
-                    textAlign = TextAlign.Center
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-                Text(
-                    text = "Lyrics will automatically enrich when connected to the internet, or you can import a local .lrc file.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Color.White.copy(alpha = 0.5f),
-                    textAlign = TextAlign.Center
-                )
-                Spacer(modifier = Modifier.height(20.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Button(
-                        onClick = { lrcPickerLauncher.launch("*/*") },
-                        colors = ButtonDefaults.buttonColors(containerColor = SpotifyGreen)
-                    ) {
-                        Icon(Icons.Default.FileOpen, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("Import .LRC File", fontWeight = FontWeight.Bold)
-                    }
-                    OutlinedButton(
-                        onClick = { showEditLyricsDialog = true }
-                    ) {
-                        Text("Manual Input", color = Color.White)
+                if (isFetchingOnlineLyrics) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(36.dp),
+                        color = SpotifyGreen,
+                        strokeWidth = 3.dp
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "Fetching synchronized lyrics...",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White.copy(alpha = 0.85f),
+                        textAlign = TextAlign.Center
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Default.Description,
+                        contentDescription = null,
+                        tint = Color.White.copy(alpha = 0.35f),
+                        modifier = Modifier.size(54.dp)
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "No lyrics found for this track",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White.copy(alpha = 0.85f),
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "Synced captions enrich automatically from the streaming engine, or you can import a local .lrc file.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.White.copy(alpha = 0.5f),
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(20.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Button(
+                            onClick = {
+                                coroutineScope.launch {
+                                    isFetchingOnlineLyrics = true
+                                    try {
+                                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                            val onlineLrc = com.example.data.OnlineMusicCatalog.fetchSyncedLyrics(songTitle, songArtist)
+                                            if (!onlineLrc.isNullOrBlank()) {
+                                                onSaveCustomLyrics(onlineLrc)
+                                            }
+                                        }
+                                    } catch (_: Exception) {
+                                    } finally {
+                                        isFetchingOnlineLyrics = false
+                                    }
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                        ) {
+                            Text("Retry Sync", fontWeight = FontWeight.Bold, color = Color.Black)
+                        }
+                        Button(
+                            onClick = { lrcPickerLauncher.launch("*/*") },
+                            colors = ButtonDefaults.buttonColors(containerColor = SpotifyGreen)
+                        ) {
+                            Icon(Icons.Default.FileOpen, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Import .LRC", fontWeight = FontWeight.Bold)
+                        }
+                        OutlinedButton(
+                            onClick = { showEditLyricsDialog = true }
+                        ) {
+                            Text("Manual Input", color = Color.White)
+                        }
                     }
                 }
             }

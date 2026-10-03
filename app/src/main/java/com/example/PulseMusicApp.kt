@@ -43,7 +43,7 @@ class PulseMusicApp : Application() {
         database = MusicDatabase.getDatabase(this)
         repository = MusicRepository(this, database.musicDao())
         settingsManager = SettingsManager(this)
-        com.example.api.StreamingApiClient.customBaseUrl = settingsManager.streamingInstanceUrl.value
+        com.example.api.StreamingApiClient.init(this)
         spotifyRepository = com.example.data.SpotifyWebRepository(database.musicDao())
         personalizationRepository = com.example.data.PersonalizationRepository(database.musicDao())
 

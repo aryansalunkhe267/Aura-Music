@@ -295,4 +295,93 @@ object OnlineMusicCatalog {
             (track.genre?.lowercase()?.contains(q) == true)
         }
     }
+
+    /**
+     * Resolves synchronized .lrc lyrics for online tracks and stream queries.
+     * Looks up curated internal catalog first, then queries the free public LRCLIB synced lyrics database.
+     */
+    fun fetchSyncedLyrics(title: String, artist: String): String? {
+        val cleanTitle = cleanTrackTitle(title)
+        val cleanArtist = artist.trim()
+
+        // 1. Check curated catalog
+        val catalogMatch = getOnlineTracks().firstOrNull {
+            it.title.equals(cleanTitle, ignoreCase = true) ||
+            cleanTitle.contains(it.title, ignoreCase = true)
+        }
+        if (!catalogMatch?.lrcLyrics.isNullOrBlank()) {
+            return catalogMatch!!.lrcLyrics
+        }
+
+        // 2. Query LRCLIB API for real synchronized .lrc lyrics
+        try {
+            val encodedTitle = android.net.Uri.encode(cleanTitle)
+            val encodedArtist = android.net.Uri.encode(cleanArtist)
+            val url = "https://lrclib.net/api/get?track_name=$encodedTitle&artist_name=$encodedArtist"
+            val request = okhttp3.Request.Builder()
+                .url(url)
+                .header("User-Agent", "PulseMusic/1.0 (Android; Jetpack Compose)")
+                .build()
+
+            val client = com.example.api.StreamingApiClient.okHttpClient
+            client.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    val body = response.body?.string()
+                    if (!body.isNullOrBlank()) {
+                        val json = org.json.JSONObject(body)
+                        val syncedLyrics = json.optString("syncedLyrics")
+                        if (syncedLyrics.isNotBlank() && syncedLyrics != "null") {
+                            return syncedLyrics
+                        }
+                        val plainLyrics = json.optString("plainLyrics")
+                        if (plainLyrics.isNotBlank() && plainLyrics != "null") {
+                            return plainLyrics
+                        }
+                    }
+                }
+            }
+
+            // 3. Fallback search query on LRCLIB
+            val queryStr = if (cleanArtist.isNotBlank() && !cleanArtist.equals("Unknown Artist", ignoreCase = true)) {
+                "$cleanTitle $cleanArtist"
+            } else {
+                cleanTitle
+            }
+            val searchUrl = "https://lrclib.net/api/search?q=${android.net.Uri.encode(queryStr)}"
+            val searchReq = okhttp3.Request.Builder()
+                .url(searchUrl)
+                .header("User-Agent", "PulseMusic/1.0 (Android; Jetpack Compose)")
+                .build()
+            client.newCall(searchReq).execute().use { response ->
+                if (response.isSuccessful) {
+                    val body = response.body?.string()
+                    if (!body.isNullOrBlank()) {
+                        val array = org.json.JSONArray(body)
+                        for (i in 0 until array.length()) {
+                            val item = array.getJSONObject(i)
+                            val synced = item.optString("syncedLyrics")
+                            if (synced.isNotBlank() && synced != "null") {
+                                return synced
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("OnlineMusicCatalog", "Error fetching synced lyrics for '$cleanTitle': ${e.message}")
+        }
+        return null
+    }
+
+    private fun cleanTrackTitle(title: String): String {
+        return title
+            .replace(Regex("\\[.*?\\]"), "")
+            .replace(Regex("\\(Official.*?\\)", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("\\(Music Video.*?\\)", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("\\(Audio.*?\\)", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("\\(Lyric Video.*?\\)", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("\\(Visualizer.*?\\)", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("ft\\..*|feat\\..*", RegexOption.IGNORE_CASE), "")
+            .trim()
+    }
 }

@@ -138,11 +138,10 @@ fun OnlineExploreScreen(
             isSearchingOnline = true
             var foundItems = emptyList<SongEntity>()
             try {
-                // 1. Try configured open-source streaming instance
-                val pipedResp = StreamingApiClient.api.searchSongs(q, filter = "music_songs")
-                val pItems = pipedResp.body() ?: emptyList()
-                if (pItems.isNotEmpty()) {
-                    foundItems = pItems.map { StreamingApiClient.mapSearchResultToSong(it) }
+                // 1. Direct native in-app search via NewPipeExtractor
+                val directResults = StreamingApiClient.searchSongs(q)
+                if (directResults.isNotEmpty()) {
+                    foundItems = directResults
                 }
             } catch (_: Exception) {}
 

@@ -2,10 +2,22 @@ package com.example.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.floatPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.preferencesDataStore
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import java.io.File
+
+val Context.settingsDataStore: DataStore<Preferences> by preferencesDataStore(name = "pulse_music_user_prefs")
 
 /**
  * High-contrast, premium color schemes required by Pulse Music.
@@ -75,6 +87,15 @@ class SettingsManager(private val context: Context) {
     private val prefs: SharedPreferences =
         context.getSharedPreferences("pulse_music_settings", Context.MODE_PRIVATE)
 
+    private val ioScope = CoroutineScope(Dispatchers.IO)
+
+    companion object {
+        val KEY_THEME_PRESET = stringPreferencesKey("theme_preset")
+        val KEY_WALLPAPER_URI = stringPreferencesKey("wallpaper_uri")
+        val KEY_WALLPAPER_SCRIM = floatPreferencesKey("wallpaper_scrim_alpha")
+        val KEY_PLAYER_STYLE = stringPreferencesKey("player_style")
+    }
+
     // Audio & Playback
     private val _bitrate = MutableStateFlow(prefs.getString("bitrate", "320 kbps") ?: "320 kbps")
     val bitrate: StateFlow<String> = _bitrate.asStateFlow()
@@ -85,7 +106,7 @@ class SettingsManager(private val context: Context) {
     private val _sleepTimerRemainingMinutes = MutableStateFlow<Int?>(null)
     val sleepTimerRemainingMinutes: StateFlow<Int?> = _sleepTimerRemainingMinutes.asStateFlow()
 
-    // Personalization & Themes
+    // Personalization & Themes (Persisted via DataStore)
     private val _themePreset = MutableStateFlow(
         try {
             AppThemePreset.valueOf(prefs.getString("theme_preset", AppThemePreset.RADIOACTIVE_GREEN.name)!!)
@@ -95,7 +116,7 @@ class SettingsManager(private val context: Context) {
     )
     val themePreset: StateFlow<AppThemePreset> = _themePreset.asStateFlow()
 
-    // Custom Wallpaper & Scrim
+    // Custom Wallpaper & Scrim (Persisted via DataStore)
     private val _customWallpaperUri = MutableStateFlow(prefs.getString("wallpaper_uri", null))
     val customWallpaperUri: StateFlow<String?> = _customWallpaperUri.asStateFlow()
 
@@ -122,6 +143,26 @@ class SettingsManager(private val context: Context) {
         prefs.getString("streaming_instance_url", "https://pipedapi.kavin.rocks/") ?: "https://pipedapi.kavin.rocks/"
     )
     val streamingInstanceUrl: StateFlow<String> = _streamingInstanceUrl.asStateFlow()
+
+    init {
+        // Read initial state from Jetpack DataStore asynchronously
+        ioScope.launch {
+            try {
+                val dataStorePrefs = context.settingsDataStore.data.first()
+                dataStorePrefs[KEY_THEME_PRESET]?.let { name ->
+                    try {
+                        _themePreset.value = AppThemePreset.valueOf(name)
+                    } catch (_: Exception) {}
+                }
+                dataStorePrefs[KEY_WALLPAPER_URI]?.let { uri ->
+                    _customWallpaperUri.value = if (uri.isBlank()) null else uri
+                }
+                dataStorePrefs[KEY_WALLPAPER_SCRIM]?.let { scrim ->
+                    _wallpaperScrimAlpha.value = scrim
+                }
+            } catch (_: Exception) {}
+        }
+    }
 
     fun setStreamingInstanceUrl(url: String) {
         val sanitized = if (!url.endsWith("/")) "$url/" else url
@@ -150,17 +191,38 @@ class SettingsManager(private val context: Context) {
     fun setThemePreset(preset: AppThemePreset) {
         _themePreset.value = preset
         prefs.edit().putString("theme_preset", preset.name).apply()
+        ioScope.launch {
+            try {
+                context.settingsDataStore.edit { ds ->
+                    ds[KEY_THEME_PRESET] = preset.name
+                }
+            } catch (_: Exception) {}
+        }
     }
 
     fun setCustomWallpaper(uriString: String?) {
         _customWallpaperUri.value = uriString
         prefs.edit().putString("wallpaper_uri", uriString).apply()
+        ioScope.launch {
+            try {
+                context.settingsDataStore.edit { ds ->
+                    ds[KEY_WALLPAPER_URI] = uriString ?: ""
+                }
+            } catch (_: Exception) {}
+        }
     }
 
     fun setWallpaperScrimAlpha(alpha: Float) {
         val clamped = alpha.coerceIn(0.40f, 0.60f)
         _wallpaperScrimAlpha.value = clamped
         prefs.edit().putFloat("wallpaper_scrim_alpha", clamped).apply()
+        ioScope.launch {
+            try {
+                context.settingsDataStore.edit { ds ->
+                    ds[KEY_WALLPAPER_SCRIM] = clamped
+                }
+            } catch (_: Exception) {}
+        }
     }
 
     fun setPlayerStyle(style: PlayerUIStyle) {

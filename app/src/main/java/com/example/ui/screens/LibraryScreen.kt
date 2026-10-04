@@ -1,9 +1,11 @@
 package com.example.ui.screens
 
 import android.net.Uri
+import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,10 +29,13 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Album
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.CreateNewFolder
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Person
@@ -38,7 +43,9 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -56,6 +63,10 @@ import androidx.compose.material3.TabRowDefaults
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.input.pointer.pointerInput
+import com.example.playback.PlaybackManager
+import com.example.ui.components.EditMetadataDialog
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -116,10 +127,13 @@ fun LibraryScreen(
     onRequestSafImport: () -> Unit,
     onOpenOnlineSearch: () -> Unit,
     onOpenSettings: () -> Unit,
+    onSaveMetadataOverride: (songId: Long, title: String, artist: String, album: String, genre: String?) -> Unit = { _, _, _, _, _ -> },
     customWallpaperUri: String? = null,
     wallpaperScrimAlpha: Float = 0.50f,
     modifier: Modifier = Modifier
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+
     // Automated Library Sections
     val allTabTitles = listOf(
         "Tracks",
@@ -145,6 +159,33 @@ fun LibraryScreen(
     var showUniversalPlusSheet by remember { mutableStateOf(false) }
     var showCreatePlaylistDialog by remember { mutableStateOf(false) }
     var songForPlaylistSelection by remember { mutableStateOf<SongEntity?>(null) }
+    var songForMetadataEdit by remember { mutableStateOf<SongEntity?>(null) }
+    var showBulkPlaylistDialog by remember { mutableStateOf(false) }
+    var showBulkDeleteConfirmDialog by remember { mutableStateOf(false) }
+
+    // Multi-Select Selection Mode
+    var selectedSongIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
+    val isSelectionMode = selectedSongIds.isNotEmpty()
+
+    fun toggleSelection(songId: Long) {
+        selectedSongIds = if (selectedSongIds.contains(songId)) {
+            selectedSongIds - songId
+        } else {
+            selectedSongIds + songId
+        }
+    }
+
+    fun setMultipleSongsSelected(songIds: Collection<Long>, isSelected: Boolean) {
+        selectedSongIds = if (isSelected) {
+            selectedSongIds + songIds
+        } else {
+            selectedSongIds - songIds.toSet()
+        }
+    }
+
+    fun clearSelection() {
+        selectedSongIds = emptySet()
+    }
 
     // Categorized song filtering
     val currentSectionTracks = remember(librarySongs, currentTabTitle, searchQuery) {
@@ -207,59 +248,138 @@ fun LibraryScreen(
                 .background(if (customWallpaperUri.isNullOrBlank()) OneUIDarkBackground else Color.Transparent)
         ) {
             // Samsung One UI Top Header
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column {
-                    Text(
-                        text = "Pulse Music",
-                        fontSize = 26.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = OneUITextPrimary
-                    )
-                    Text(
-                        text = "${librarySongs.size} tracks offline",
-                        fontSize = 12.sp,
-                        color = OneUITextSecondary
-                    )
+            if (isSelectionMode) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f), RoundedCornerShape(16.dp))
+                        .padding(horizontal = 6.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = { clearSelection() }) {
+                            Icon(Icons.Default.Close, contentDescription = "Cancel Selection", tint = OneUITextPrimary)
+                        }
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "${selectedSongIds.size} Selected",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = OneUITextPrimary
+                        )
+                    }
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        // Select All / Deselect All
+                        IconButton(onClick = {
+                            selectedSongIds = if (selectedSongIds.size == currentSectionTracks.size) {
+                                emptySet()
+                            } else {
+                                currentSectionTracks.map { it.id }.toSet()
+                            }
+                        }) {
+                            Icon(Icons.Default.SelectAll, contentDescription = "Select All", tint = OneUITextPrimary)
+                        }
+
+                        // Play Next
+                        IconButton(onClick = {
+                            val selectedList = currentSectionTracks.filter { selectedSongIds.contains(it.id) }
+                            if (selectedList.isNotEmpty()) {
+                                PlaybackManager.playNext(selectedList)
+                                Toast.makeText(context, "Added ${selectedList.size} tracks to Play Next", Toast.LENGTH_SHORT).show()
+                                clearSelection()
+                            }
+                        }) {
+                            Icon(Icons.AutoMirrored.Filled.QueueMusic, contentDescription = "Play Next", tint = OneUITextPrimary)
+                        }
+
+                        // Add to Playlist
+                        IconButton(onClick = {
+                            if (selectedSongIds.isNotEmpty()) {
+                                showBulkPlaylistDialog = true
+                            }
+                        }) {
+                            Icon(Icons.Default.PlaylistAdd, contentDescription = "Add to Playlist", tint = OneUITextPrimary)
+                        }
+
+                        // Bulk Delete
+                        IconButton(onClick = {
+                            if (selectedSongIds.isNotEmpty()) {
+                                showBulkDeleteConfirmDialog = true
+                            }
+                        }) {
+                            Icon(Icons.Default.Delete, contentDescription = "Bulk Delete", tint = Color(0xFFFF5252))
+                        }
+
+                        // Play Selected
+                        IconButton(onClick = {
+                            val selectedList = currentSectionTracks.filter { selectedSongIds.contains(it.id) }
+                            if (selectedList.isNotEmpty()) {
+                                onSongSelected(selectedList.first(), selectedList)
+                                clearSelection()
+                            }
+                        }) {
+                            Icon(Icons.Default.PlayArrow, contentDescription = "Play Selected", tint = MaterialTheme.colorScheme.primary)
+                        }
+                    }
                 }
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(
-                        onClick = { isSearchActive = !isSearchActive },
-                        modifier = Modifier.testTag("toggle_search_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Search,
-                            contentDescription = "Search",
-                            tint = if (isSearchActive) MaterialTheme.colorScheme.primary else OneUITextPrimary
+            } else {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column {
+                        Text(
+                            text = "Pulse Music",
+                            fontSize = 26.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = OneUITextPrimary
+                        )
+                        Text(
+                            text = "${librarySongs.size} tracks offline",
+                            fontSize = 12.sp,
+                            color = OneUITextSecondary
                         )
                     }
 
-                    IconButton(
-                        onClick = onRescanRequested,
-                        modifier = Modifier.testTag("rescan_media_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Refresh,
-                            contentDescription = "Rescan Media",
-                            tint = OneUITextPrimary
-                        )
-                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(
+                            onClick = { isSearchActive = !isSearchActive },
+                            modifier = Modifier.testTag("toggle_search_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Search,
+                                contentDescription = "Search",
+                                tint = if (isSearchActive) MaterialTheme.colorScheme.primary else OneUITextPrimary
+                            )
+                        }
 
-                    IconButton(
-                        onClick = onOpenSettings,
-                        modifier = Modifier.testTag("settings_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Settings,
-                            contentDescription = "Settings",
-                            tint = OneUITextPrimary
-                        )
+                        IconButton(
+                            onClick = onRescanRequested,
+                            modifier = Modifier.testTag("rescan_media_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = "Rescan Media",
+                                tint = OneUITextPrimary
+                            )
+                        }
+
+                        IconButton(
+                            onClick = onOpenSettings,
+                            modifier = Modifier.testTag("settings_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Settings,
+                                contentDescription = "Settings",
+                                tint = OneUITextPrimary
+                            )
+                        }
                     }
                 }
             }
@@ -348,12 +468,17 @@ fun LibraryScreen(
                     else -> TrackListWithFastScroll(
                         tracks = currentSectionTracks,
                         currentPlayingSongId = currentPlayingSongId,
+                        isSelectionMode = isSelectionMode,
+                        selectedSongIds = selectedSongIds,
+                        onToggleSelection = { toggleSelection(it) },
+                        onSetSongsSelected = { ids, sel -> setMultipleSongsSelected(ids, sel) },
                         onSongSelected = { song -> onSongSelected(song, currentSectionTracks) },
                         onToggleFavorite = onToggleFavorite,
                         onToggleSoftHide = onToggleSoftHide,
                         onDeleteFromStorage = onDeleteFromStorage,
                         onOpenAudioEditor = onOpenAudioEditor,
-                        onAddToPlaylistClick = { songForPlaylistSelection = it }
+                        onAddToPlaylistClick = { songForPlaylistSelection = it },
+                        onEditMetadata = { songForMetadataEdit = it }
                     )
                 }
             }
@@ -596,23 +721,138 @@ fun LibraryScreen(
             }
         }
     }
+
+    // Bulk Add to Playlist Dialog
+    if (showBulkPlaylistDialog) {
+        val selectedSongsList = currentSectionTracks.filter { selectedSongIds.contains(it.id) }
+        Dialog(onDismissRequest = { showBulkPlaylistDialog = false }) {
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = OneUICardElevated,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(20.dp)) {
+                    Text(
+                        text = "Add ${selectedSongsList.size} Songs to Playlist",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = OneUITextPrimary
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    LazyColumn(modifier = Modifier.height(240.dp)) {
+                        items(playlists) { playlist ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        selectedSongsList.forEach { s ->
+                                            onAddSongToPlaylist(playlist.playlistId, s.id)
+                                        }
+                                        Toast.makeText(context, "Added ${selectedSongsList.size} songs to ${playlist.name}", Toast.LENGTH_SHORT).show()
+                                        showBulkPlaylistDialog = false
+                                        clearSelection()
+                                    }
+                                    .padding(vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Default.PlaylistAdd, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column {
+                                    Text(playlist.name, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = OneUITextPrimary)
+                                    Text(playlist.description, fontSize = 11.sp, color = OneUITextSecondary)
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                    TextButton(
+                        onClick = { showBulkPlaylistDialog = false },
+                        modifier = Modifier.align(Alignment.End)
+                    ) {
+                        Text("Cancel", color = MaterialTheme.colorScheme.primary)
+                    }
+                }
+            }
+        }
+    }
+
+    // Bulk Delete Confirmation Dialog
+    if (showBulkDeleteConfirmDialog) {
+        val selectedSongsList = currentSectionTracks.filter { selectedSongIds.contains(it.id) }
+        AlertDialog(
+            onDismissRequest = { showBulkDeleteConfirmDialog = false },
+            title = {
+                Text("Delete ${selectedSongsList.size} Songs?", color = OneUITextPrimary, fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Text("Are you sure you want to delete these songs from your storage?", color = OneUITextSecondary)
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        selectedSongsList.forEach { s ->
+                            onDeleteFromStorage(s)
+                        }
+                        Toast.makeText(context, "Deleted ${selectedSongsList.size} songs", Toast.LENGTH_SHORT).show()
+                        showBulkDeleteConfirmDialog = false
+                        clearSelection()
+                    }
+                ) {
+                    Text("Delete", color = Color(0xFFFF5252), fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showBulkDeleteConfirmDialog = false }) {
+                    Text("Cancel", color = OneUITextSecondary)
+                }
+            },
+            containerColor = OneUICardElevated
+        )
+    }
+
+    // Permanent Tag & Title Metadata Editor Dialog (Room Override)
+    songForMetadataEdit?.let { editingSong ->
+        EditMetadataDialog(
+            song = editingSong,
+            onDismiss = { songForMetadataEdit = null },
+            onSave = { title, artist, album, genre ->
+                onSaveMetadataOverride(editingSong.id, title, artist, album, genre)
+                songForMetadataEdit = null
+            }
+        )
+    }
 }
 
 /**
- * Track list layout with pinned fast-scroll alphabet indexer on the right edge.
+ * Track list layout with pinned fast-scroll alphabet indexer on the right edge
+ * and continuous drag-to-select multi-selection.
  */
 @Composable
 private fun TrackListWithFastScroll(
     tracks: List<SongEntity>,
     currentPlayingSongId: Long?,
+    isSelectionMode: Boolean = false,
+    selectedSongIds: Set<Long> = emptySet(),
+    onToggleSelection: (Long) -> Unit = {},
+    onSetSongsSelected: (Collection<Long>, Boolean) -> Unit = { _, _ -> },
     onSongSelected: (SongEntity) -> Unit,
     onToggleFavorite: (SongEntity) -> Unit,
     onToggleSoftHide: (SongEntity) -> Unit,
     onDeleteFromStorage: (SongEntity) -> Unit,
     onOpenAudioEditor: (SongEntity) -> Unit,
-    onAddToPlaylistClick: (SongEntity) -> Unit
+    onAddToPlaylistClick: (SongEntity) -> Unit,
+    onEditMetadata: (SongEntity) -> Unit = {}
 ) {
     val listState = rememberLazyListState()
+    var dragSelectMode by remember { mutableStateOf<Boolean?>(null) }
+    var initialDragIndex by remember { mutableIntStateOf(-1) }
+
+    val currentTracks by rememberUpdatedState(tracks)
+    val currentSelectedIds by rememberUpdatedState(selectedSongIds)
+    val currentOnToggle by rememberUpdatedState(onToggleSelection)
+    val currentOnSetSongsSelected by rememberUpdatedState(onSetSongsSelected)
 
     if (tracks.isEmpty()) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -624,7 +864,51 @@ private fun TrackListWithFastScroll(
     Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             state = listState,
-            modifier = Modifier.fillMaxSize().padding(end = 28.dp),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(end = 28.dp)
+                .pointerInput(Unit) {
+                    detectDragGesturesAfterLongPress(
+                        onDragStart = { offset ->
+                            val hitItem = listState.layoutInfo.visibleItemsInfo.firstOrNull { item ->
+                                offset.y.toInt() in item.offset..(item.offset + item.size)
+                            }
+                            if (hitItem != null && hitItem.index in currentTracks.indices) {
+                                val song = currentTracks[hitItem.index]
+                                val isCurrentlySelected = currentSelectedIds.contains(song.id)
+                                val willSelect = !isCurrentlySelected
+                                dragSelectMode = willSelect
+                                initialDragIndex = hitItem.index
+                                currentOnToggle(song.id)
+                            }
+                        },
+                        onDrag = { change, _ ->
+                            change.consume()
+                            val hitItem = listState.layoutInfo.visibleItemsInfo.firstOrNull { item ->
+                                change.position.y.toInt() in item.offset..(item.offset + item.size)
+                            }
+                            if (hitItem != null && hitItem.index in currentTracks.indices) {
+                                val currentIndex = hitItem.index
+                                val willSelect = dragSelectMode ?: true
+                                val start = if (initialDragIndex >= 0) initialDragIndex else currentIndex
+                                val minIdx = minOf(start, currentIndex)
+                                val maxIdx = maxOf(start, currentIndex)
+                                val idsToUpdate = (minIdx..maxIdx).mapNotNull { idx ->
+                                    if (idx in currentTracks.indices) currentTracks[idx].id else null
+                                }
+                                currentOnSetSongsSelected(idsToUpdate, willSelect)
+                            }
+                        },
+                        onDragEnd = {
+                            dragSelectMode = null
+                            initialDragIndex = -1
+                        },
+                        onDragCancel = {
+                            dragSelectMode = null
+                            initialDragIndex = -1
+                        }
+                    )
+                },
             contentPadding = PaddingValues(bottom = 96.dp)
         ) {
             itemsIndexed(tracks, key = { _, s -> s.id }) { index, song ->
@@ -632,12 +916,24 @@ private fun TrackListWithFastScroll(
                     index = index + 1,
                     song = song,
                     isCurrentPlaying = song.id == currentPlayingSongId,
-                    onClick = { onSongSelected(song) },
+                    isSelectionMode = isSelectionMode,
+                    isSelected = selectedSongIds.contains(song.id),
+                    onClick = {
+                        if (isSelectionMode) {
+                            onToggleSelection(song.id)
+                        } else {
+                            onSongSelected(song)
+                        }
+                    },
+                    onLongClick = {
+                        onToggleSelection(song.id)
+                    },
                     onToggleFavorite = { onToggleFavorite(song) },
                     onToggleSoftHide = { onToggleSoftHide(song) },
                     onDeleteFromStorage = { onDeleteFromStorage(song) },
                     onOpenAudioEditor = { onOpenAudioEditor(song) },
-                    onAddToPlaylistClick = { onAddToPlaylistClick(song) }
+                    onAddToPlaylistClick = { onAddToPlaylistClick(song) },
+                    onEditMetadata = { onEditMetadata(song) }
                 )
             }
         }

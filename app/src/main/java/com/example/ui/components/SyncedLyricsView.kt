@@ -69,6 +69,7 @@ fun SyncedLyricsView(
     currentPositionMs: Long,
     onSeekRequested: (Long) -> Unit,
     onSaveCustomLyrics: (String) -> Unit,
+    song: com.example.data.SongEntity? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -86,13 +87,42 @@ fun SyncedLyricsView(
     var showEditLyricsDialog by remember { mutableStateOf(false) }
     var isFetchingOnlineLyrics by remember { mutableStateOf(false) }
 
-    // Auto-enrich synced lyrics online if empty
-    LaunchedEffect(songTitle, songArtist, lyricsLines.isEmpty()) {
-        if (lyricsLines.isEmpty() && songTitle.isNotBlank()) {
+    // Auto-resolve lyrics: check Room CustomLyricsEntity cache, embedded ID3, local .lrc, then LRCLIB
+    LaunchedEffect(song?.id, songTitle, songArtist, lyricsLines.isEmpty()) {
+        if (lyricsLines.isEmpty() && (songTitle.isNotBlank() || song != null)) {
+            var resolvedLocal = false
+            try {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    val app = com.example.PulseMusicApp.instance
+                    val repo = app.repository
+                    val currentSongEntity = song ?: app.database.musicDao().getAllSongsUnlimited().firstOrNull {
+                        it.title.equals(songTitle, ignoreCase = true)
+                    }
+
+                    if (currentSongEntity != null) {
+                        // 1. Check local Room CustomLyricsEntity cache, embedded ID3, and .lrc in folder
+                        val localCachedLyrics = repo.resolveLyricsForSong(currentSongEntity)
+                        if (!localCachedLyrics.isNullOrBlank()) {
+                            onSaveCustomLyrics(localCachedLyrics)
+                            resolvedLocal = true
+                        }
+                    }
+                }
+            } catch (_: Exception) {}
+
+            if (resolvedLocal) return@LaunchedEffect
+
+            // Only attempt online LRCLIB API query if local sources yielded nothing
             isFetchingOnlineLyrics = true
             try {
                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    val onlineLrc = com.example.data.OnlineMusicCatalog.fetchSyncedLyrics(songTitle, songArtist)
+                    val lrclib = com.example.api.LrclibApiClient.fetchLyrics(
+                        title = songTitle,
+                        artist = songArtist,
+                        durationSeconds = (durationMs / 1000).takeIf { it > 10 }
+                    )
+                    val onlineLrc = lrclib?.syncedLyrics ?: lrclib?.plainLyrics
+                        ?: com.example.data.OnlineMusicCatalog.fetchSyncedLyrics(songTitle, songArtist)
                     if (!onlineLrc.isNullOrBlank()) {
                         onSaveCustomLyrics(onlineLrc)
                     }

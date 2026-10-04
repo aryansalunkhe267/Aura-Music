@@ -111,6 +111,7 @@ import com.example.ui.theme.SpotifyGreen
 import com.example.utils.LrcParser
 import com.example.utils.LyricLine
 import com.example.utils.cleanMetadataString
+import com.example.utils.rememberDebouncedClick
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -155,6 +156,11 @@ fun EnhancedPlayerSheet(
     if (song == null) return
 
     val context = LocalContext.current
+
+    val debouncedPlayPause = rememberDebouncedClick(300L, onPlayPauseClick)
+    val debouncedNext = rememberDebouncedClick(300L, onNextClick)
+    val debouncedPrevious = rememberDebouncedClick(300L, onPreviousClick)
+    val debouncedFavorite = rememberDebouncedClick(300L) { onToggleFavorite?.invoke(song) }
 
     // Extracted Palette dominant accent colors
     var dominantColor by remember { mutableStateOf(Color(0xFF14241B)) }
@@ -394,7 +400,8 @@ fun EnhancedPlayerSheet(
                         durationMs = totalDuration,
                         currentPositionMs = currentPositionMs,
                         onSeekRequested = onSeekTo,
-                        onSaveCustomLyrics = { updatedLyrics: String -> onSaveLyrics(song, updatedLyrics) }
+                        onSaveCustomLyrics = { updatedLyrics: String -> onSaveLyrics(song, updatedLyrics) },
+                        song = song
                     )
                     2 -> QueueSheet(
                         queue = queue,
@@ -443,7 +450,7 @@ fun EnhancedPlayerSheet(
                         // Optimistic Heart Favorite Button
                         if (onToggleFavorite != null) {
                             IconButton(
-                                onClick = { onToggleFavorite(song) },
+                                onClick = debouncedFavorite,
                                 modifier = Modifier
                                     .size(48.dp)
                                     .testTag("player_favorite_button")
@@ -540,7 +547,7 @@ fun EnhancedPlayerSheet(
 
                     // Previous Track
                     IconButton(
-                        onClick = onPreviousClick,
+                        onClick = debouncedPrevious,
                         modifier = Modifier
                             .size(52.dp)
                             .testTag("prev_button")
@@ -555,7 +562,7 @@ fun EnhancedPlayerSheet(
 
                     // Play/Pause Action
                     FloatingActionButton(
-                        onClick = onPlayPauseClick,
+                        onClick = debouncedPlayPause,
                         shape = CircleShape,
                         containerColor = MaterialTheme.colorScheme.primary,
                         contentColor = Color.Black,
@@ -572,7 +579,7 @@ fun EnhancedPlayerSheet(
 
                     // Next Track
                     IconButton(
-                        onClick = onNextClick,
+                        onClick = debouncedNext,
                         modifier = Modifier
                             .size(52.dp)
                             .testTag("next_button")

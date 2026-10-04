@@ -11,9 +11,11 @@ import androidx.room.RoomDatabase
         PlaylistEntity::class,
         PlaylistSongCrossRef::class,
         PlaybackHistoryEntity::class,
-        SpotifyAffinityEntity::class
+        SpotifyAffinityEntity::class,
+        CustomLyricsEntity::class,
+        SongOverrideEntity::class
     ],
-    version = 5,
+    version = 6,
     exportSchema = false
 )
 abstract class MusicDatabase : RoomDatabase() {

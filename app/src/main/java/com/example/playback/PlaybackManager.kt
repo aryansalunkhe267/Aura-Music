@@ -252,7 +252,38 @@ object PlaybackManager {
         }
     }
 
+    private var lastControlTimestamp = 0L
+
+    fun playRadioStation(station: com.example.api.RadioStationItem) {
+        val radioSong = SongEntity(
+            id = 8_000_000L + (station.id.hashCode().toLong() and 0x7FFFFFFF),
+            title = station.name,
+            artist = "Live Radio • ${station.language?.uppercase() ?: "GLOBAL"}",
+            album = station.country ?: "Internet Radio",
+            durationMs = 0L,
+            contentUri = station.streamUrl,
+            streamUrl = station.streamUrl,
+            albumArtUri = station.favicon?.takeIf { it.isNotBlank() },
+            coverArtUrl = station.favicon?.takeIf { it.isNotBlank() },
+            sourceType = "ONLINE",
+            isDownloaded = false,
+            genre = "Radio • ${station.tags?.take(20) ?: "Live"}"
+        )
+        playSong(radioSong, listOf(radioSong))
+    }
+
+    fun updateCurrentSongMetadata(updatedSong: SongEntity) {
+        if (_currentSong.value?.id == updatedSong.id) {
+            _currentSong.value = updatedSong
+            PulseMusicWidget.notifyWidgetUpdate(appContext)
+        }
+    }
+
     fun playPause() {
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - lastControlTimestamp < 300L) return
+        lastControlTimestamp = now
+
         mainHandler.post {
             val player = exoPlayer ?: return@post
             if (player.isPlaying) {
@@ -268,6 +299,10 @@ object PlaybackManager {
     }
 
     fun playNext() {
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - lastControlTimestamp < 300L) return
+        lastControlTimestamp = now
+
         mainHandler.post {
             val currentIdx = _currentQueueIndex.value
             val currentList = _queue.value
@@ -291,6 +326,10 @@ object PlaybackManager {
     }
 
     fun playPrevious() {
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - lastControlTimestamp < 300L) return
+        lastControlTimestamp = now
+
         mainHandler.post {
             val player = exoPlayer
             if (player != null && player.currentPosition > 3000L) {
@@ -374,6 +413,25 @@ object PlaybackManager {
         }
     }
 
+    fun playNext(songs: List<SongEntity>) {
+        if (songs.isEmpty()) return
+        val currentList = _queue.value.toMutableList()
+        val currentIdx = _currentQueueIndex.value
+        if (currentList.isEmpty() || currentIdx !in currentList.indices) {
+            _queue.value = songs
+            _currentQueueIndex.value = 0
+            playSong(songs.first(), songs)
+        } else {
+            val insertIndex = currentIdx + 1
+            currentList.addAll(insertIndex, songs)
+            _queue.value = currentList
+        }
+    }
+
+    fun playNext(song: SongEntity) {
+        playNext(listOf(song))
+    }
+
     fun removeFromQueue(index: Int) {
         val list = _queue.value.toMutableList()
         if (index in list.indices) {
@@ -406,6 +464,18 @@ object PlaybackManager {
         mainScope.launch {
             try {
                 var playSong = song
+
+                // Offline Lyrics Display: resolve local lyrics immediately (Room CustomLyrics, embedded ID3 USLT, matching .lrc)
+                if (playSong.lrcLyrics.isNullOrBlank() && playSong.syncedLyrics.isNullOrBlank()) {
+                    val localLyrics = repository.resolveLyricsForSong(playSong)
+                    if (!localLyrics.isNullOrBlank()) {
+                        playSong = playSong.copy(
+                            lrcLyrics = localLyrics,
+                            syncedLyrics = localLyrics
+                        )
+                        _currentSong.value = playSong
+                    }
+                }
 
                 // Bridge YouTube / Spotify imported tracks or Online streams to direct high-quality m4a audio stream
                 if ((song.contentUri.startsWith("youtube://") || song.contentUri.startsWith("piped://")) && song.streamUrl.isNullOrBlank()) {

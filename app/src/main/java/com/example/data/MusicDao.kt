@@ -160,4 +160,43 @@ interface MusicDao {
 
     @Query("DELETE FROM spotify_affinity")
     suspend fun clearSpotifyAffinities()
+
+    // Custom Lyrics Persistence (Room)
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun saveCustomLyrics(lyrics: CustomLyricsEntity)
+
+    @Query("SELECT * FROM custom_lyrics WHERE songId = :songId LIMIT 1")
+    suspend fun getCustomLyrics(songId: Long): CustomLyricsEntity?
+
+    @Query("SELECT * FROM custom_lyrics WHERE audioPath = :audioPath LIMIT 1")
+    suspend fun getCustomLyricsByPath(audioPath: String): CustomLyricsEntity?
+
+    @Query("DELETE FROM custom_lyrics WHERE songId = :songId")
+    suspend fun deleteCustomLyrics(songId: Long)
+
+    // Permanent Tag & Title Metadata Overrides (Room)
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun saveSongOverride(override: SongOverrideEntity)
+
+    @Query("SELECT * FROM song_overrides WHERE songId = :songId LIMIT 1")
+    suspend fun getSongOverride(songId: Long): SongOverrideEntity?
+
+    @Query("SELECT * FROM song_overrides WHERE audioPath = :audioPath LIMIT 1")
+    suspend fun getSongOverrideByPath(audioPath: String): SongOverrideEntity?
+
+    @Query("SELECT * FROM song_overrides")
+    fun getAllSongOverrides(): Flow<List<SongOverrideEntity>>
+
+    @Query("SELECT * FROM song_overrides")
+    suspend fun getAllSongOverridesDirect(): List<SongOverrideEntity>
+
+    @Query("DELETE FROM song_overrides WHERE songId = :songId")
+    suspend fun deleteSongOverride(songId: Long)
+
+    // Playlist Reordering & Clear
+    @Query("UPDATE playlist_song_cross_ref SET sortOrder = :sortOrder WHERE playlistId = :playlistId AND songId = :songId")
+    suspend fun updatePlaylistSortOrder(playlistId: Long, songId: Long, sortOrder: Int)
+
+    @Query("DELETE FROM playlist_song_cross_ref WHERE playlistId = :playlistId")
+    suspend fun clearSongsFromPlaylist(playlistId: Long)
 }

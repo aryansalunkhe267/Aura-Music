@@ -2,7 +2,9 @@ package com.example.ui.components
 
 import android.annotation.SuppressLint
 import android.graphics.Bitmap
+import android.net.Uri
 import android.webkit.CookieManager
+import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -363,11 +365,15 @@ fun SpotifyLoginDialog(
                                         android.view.ViewGroup.LayoutParams.MATCH_PARENT,
                                         android.view.ViewGroup.LayoutParams.MATCH_PARENT
                                     )
+                                    setBackgroundColor(android.graphics.Color.WHITE)
                                     @SuppressLint("SetJavaScriptEnabled")
                                     settings.javaScriptEnabled = true
                                     settings.domStorageEnabled = true
                                     settings.databaseEnabled = true
+                                    settings.allowFileAccess = true
+                                    settings.allowContentAccess = true
                                     settings.javaScriptCanOpenWindowsAutomatically = true
+                                    settings.setSupportMultipleWindows(false)
                                     settings.loadWithOverviewMode = true
                                     settings.useWideViewPort = true
                                     settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
@@ -380,18 +386,149 @@ fun SpotifyLoginDialog(
                                     cookieManager.setAcceptThirdPartyCookies(this, true)
 
                                     webViewClient = object : WebViewClient() {
+                                        private fun interceptAndExtractSession(url: String?): Boolean {
+                                            if (url.isNullOrBlank() || hasCapturedCookie) return false
+                                            try {
+                                                val uri = Uri.parse(url)
+
+                                                // 1. Intercept redirect URIs carrying authorization code or token in query params
+                                                val spDcParam = uri.getQueryParameter("sp_dc")
+                                                val tokenParam = uri.getQueryParameter("access_token")
+                                                val codeParam = uri.getQueryParameter("code")
+
+                                                // 2. Intercept OAuth tokens or codes in URL fragment (e.g. #access_token=...&token_type=Bearer)
+                                                var fragmentToken: String? = null
+                                                var fragmentSpDc: String? = null
+                                                var fragmentCode: String? = null
+                                                val fragment = uri.fragment
+                                                if (!fragment.isNullOrBlank()) {
+                                                    fragment.split("&").forEach { pair ->
+                                                        val parts = pair.split("=", limit = 2)
+                                                        if (parts.size == 2) {
+                                                            val key = parts[0]
+                                                            val value = Uri.decode(parts[1])
+                                                            if (key == "access_token") fragmentToken = value
+                                                            else if (key == "sp_dc") fragmentSpDc = value
+                                                            else if (key == "code") fragmentCode = value
+                                                        }
+                                                    }
+                                                }
+
+                                                val tokenCandidate = spDcParam ?: fragmentSpDc ?: tokenParam ?: fragmentToken ?: codeParam ?: fragmentCode
+                                                if (!tokenCandidate.isNullOrBlank()) {
+                                                    executeImport(tokenCandidate)
+                                                    return true
+                                                }
+
+                                                // 3. Check cookies across all Spotify endpoints
+                                                val cookies = cookieManager.getCookie("https://spotify.com")
+                                                    ?: cookieManager.getCookie("https://open.spotify.com")
+                                                    ?: cookieManager.getCookie("https://accounts.spotify.com")
+                                                    ?: (cookieManager.getCookie(url))
+                                                    ?: ""
+
+                                                val spDc = extractCookieValue(cookies, "sp_dc")
+                                                if (!spDc.isNullOrBlank() && !hasCapturedCookie) {
+                                                    executeImport(spDc)
+                                                    return true
+                                                }
+
+                                                // 4. Intercept redirect URIs (localhost, loopback, custom app schemes)
+                                                val host = uri.host?.lowercase() ?: ""
+                                                val scheme = uri.scheme?.lowercase() ?: ""
+                                                val isRedirectUri = host == "localhost" || host == "127.0.0.1" ||
+                                                        scheme == "spotube" || scheme == "com.example" || scheme == "spotify" ||
+                                                        url.contains("/callback") || url.contains("redirect_uri")
+
+                                                if (isRedirectUri) {
+                                                    cookieManager.flush()
+                                                    val flushedCookies = cookieManager.getCookie("https://spotify.com")
+                                                        ?: cookieManager.getCookie("https://open.spotify.com")
+                                                        ?: cookieManager.getCookie("https://accounts.spotify.com")
+                                                        ?: ""
+                                                    val flushedSpDc = extractCookieValue(flushedCookies, "sp_dc")
+                                                    if (!flushedSpDc.isNullOrBlank()) {
+                                                        executeImport(flushedSpDc)
+                                                    }
+                                                    return true // Consume redirect to prevent ERR_CONNECTION_REFUSED / blank screen
+                                                }
+                                            } catch (_: Exception) {}
+                                            return false
+                                        }
+
+                                        override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                                            val targetUrl = request?.url?.toString() ?: return false
+                                            if (interceptAndExtractSession(targetUrl)) {
+                                                return true
+                                            }
+                                            if (targetUrl.startsWith("http://") || targetUrl.startsWith("https://")) {
+                                                return false
+                                            }
+                                            return try {
+                                                val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, request.url)
+                                                ctx.startActivity(intent)
+                                                true
+                                            } catch (_: Exception) {
+                                                false
+                                            }
+                                        }
+
+                                        @Deprecated("Deprecated in Java")
+                                        override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean {
+                                            if (url == null) return false
+                                            if (interceptAndExtractSession(url)) {
+                                                return true
+                                            }
+                                            if (url.startsWith("http://") || url.startsWith("https://")) {
+                                                return false
+                                            }
+                                            return try {
+                                                val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, Uri.parse(url))
+                                                ctx.startActivity(intent)
+                                                true
+                                            } catch (_: Exception) {
+                                                false
+                                            }
+                                        }
+
+                                        override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                                            super.onPageStarted(view, url, favicon)
+                                            interceptAndExtractSession(url)
+                                        }
+
                                         override fun onPageFinished(view: WebView?, url: String?) {
                                             super.onPageFinished(view, url)
-                                            // Check cookies for sp_dc session token
-                                            val currentUrl = url ?: ""
-                                            val cookies = cookieManager.getCookie("https://spotify.com")
-                                                ?: cookieManager.getCookie("https://open.spotify.com")
-                                                ?: cookieManager.getCookie("https://accounts.spotify.com")
-                                                ?: ""
+                                            cookieManager.flush()
+                                            interceptAndExtractSession(url)
+                                        }
 
-                                            val spDc = extractCookieValue(cookies, "sp_dc")
-                                            if (!spDc.isNullOrBlank() && !hasCapturedCookie) {
-                                                executeImport(spDc)
+                                        override fun onLoadResource(view: WebView?, url: String?) {
+                                            super.onLoadResource(view, url)
+                                            interceptAndExtractSession(url)
+                                        }
+
+                                        override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
+                                            super.doUpdateVisitedHistory(view, url, isReload)
+                                            interceptAndExtractSession(url)
+                                        }
+                                    }
+
+                                    webChromeClient = object : android.webkit.WebChromeClient() {
+                                        override fun onProgressChanged(view: WebView?, newProgress: Int) {
+                                            super.onProgressChanged(view, newProgress)
+                                            if (newProgress > 50) {
+                                                cookieManager.flush()
+                                                val curUrl = view?.url
+                                                if (!curUrl.isNullOrBlank()) {
+                                                    val cookies = cookieManager.getCookie("https://spotify.com")
+                                                        ?: cookieManager.getCookie("https://open.spotify.com")
+                                                        ?: cookieManager.getCookie("https://accounts.spotify.com")
+                                                        ?: ""
+                                                    val spDc = extractCookieValue(cookies, "sp_dc")
+                                                    if (!spDc.isNullOrBlank() && !hasCapturedCookie) {
+                                                        executeImport(spDc)
+                                                    }
+                                                }
                                             }
                                         }
                                     }

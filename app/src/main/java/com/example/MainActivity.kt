@@ -57,11 +57,14 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.SongEntity
 import com.example.playback.PlaybackManager
 import com.example.ui.components.AudioEditorDialog
+import androidx.compose.material.icons.filled.Radio
 import com.example.ui.components.EnhancedPlayerSheet
 import com.example.ui.components.MiniPlayerBar
 import com.example.ui.components.SpotifyLoginDialog
 import com.example.ui.screens.LibraryScreen
 import com.example.ui.screens.OnlineExploreScreen
+import com.example.ui.screens.PlaylistDetailScreen
+import com.example.ui.screens.RadioScreen
 import com.example.ui.screens.ServerSettingsScreen
 import com.example.ui.screens.SettingsScreen
 import com.example.ui.theme.OneUIDarkBackground
@@ -71,7 +74,8 @@ import kotlinx.coroutines.launch
 
 enum class MainNavTab {
     LOCAL_LIBRARY,
-    ONLINE_EXPLORE
+    ONLINE_EXPLORE,
+    RADIO
 }
 
 class MainActivity : ComponentActivity() {
@@ -187,11 +191,16 @@ class MainActivity : ComponentActivity() {
 
                 // Dialogs & Navigation State
                 var currentNavTab by remember { mutableStateOf(MainNavTab.LOCAL_LIBRARY) }
+                var activePlaylistId by remember { mutableStateOf<Long?>(null) }
                 var editingSongForTrim by remember { mutableStateOf<SongEntity?>(null) }
                 var showSettingsScreen by remember { mutableStateOf(false) }
                 var showServerSettingsScreen by remember { mutableStateOf(false) }
                 var showSpotifyLoginDialog by remember { mutableStateOf(false) }
                 var exploreRefreshTrigger by remember { mutableLongStateOf(0L) }
+
+                BackHandler(enabled = activePlaylistId != null) {
+                    activePlaylistId = null
+                }
 
                 BackHandler(enabled = showSettingsScreen) {
                     showSettingsScreen = false
@@ -201,7 +210,7 @@ class MainActivity : ComponentActivity() {
                     showServerSettingsScreen = false
                 }
 
-                BackHandler(enabled = !showSettingsScreen && !showServerSettingsScreen && currentNavTab == MainNavTab.ONLINE_EXPLORE) {
+                BackHandler(enabled = !showSettingsScreen && !showServerSettingsScreen && activePlaylistId == null && currentNavTab != MainNavTab.LOCAL_LIBRARY) {
                     currentNavTab = MainNavTab.LOCAL_LIBRARY
                 }
 
@@ -342,10 +351,11 @@ class MainActivity : ComponentActivity() {
                                         )
 
                                         NavigationBarItem(
-                                            selected = currentNavTab == MainNavTab.ONLINE_EXPLORE && !showSettingsScreen,
+                                            selected = currentNavTab == MainNavTab.ONLINE_EXPLORE && !showSettingsScreen && activePlaylistId == null,
                                             onClick = {
                                                 currentNavTab = MainNavTab.ONLINE_EXPLORE
                                                 showSettingsScreen = false
+                                                activePlaylistId = null
                                             },
                                             icon = {
                                                 Icon(Icons.Default.CloudDownload, contentDescription = "Online Explore")
@@ -365,6 +375,33 @@ class MainActivity : ComponentActivity() {
                                                 unselectedTextColor = OneUITextSecondary
                                             ),
                                             modifier = Modifier.testTag("tab_online_explore")
+                                        )
+
+                                        NavigationBarItem(
+                                            selected = currentNavTab == MainNavTab.RADIO && !showSettingsScreen && activePlaylistId == null,
+                                            onClick = {
+                                                currentNavTab = MainNavTab.RADIO
+                                                showSettingsScreen = false
+                                                activePlaylistId = null
+                                            },
+                                            icon = {
+                                                Icon(Icons.Default.Radio, contentDescription = "Radio")
+                                            },
+                                            label = {
+                                                Text(
+                                                    text = "Radio",
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.SemiBold
+                                                )
+                                            },
+                                            colors = NavigationBarItemDefaults.colors(
+                                                selectedIconColor = Color.Black,
+                                                selectedTextColor = MaterialTheme.colorScheme.primary,
+                                                indicatorColor = MaterialTheme.colorScheme.primary,
+                                                unselectedIconColor = OneUITextSecondary,
+                                                unselectedTextColor = OneUITextSecondary
+                                            ),
+                                            modifier = Modifier.testTag("tab_radio")
                                         )
                                     }
                                 }
@@ -387,6 +424,12 @@ class MainActivity : ComponentActivity() {
                                 ServerSettingsScreen(
                                     settingsManager = settingsManager,
                                     onBack = { showServerSettingsScreen = false }
+                                )
+                            } else if (activePlaylistId != null) {
+                                PlaylistDetailScreen(
+                                    playlistId = activePlaylistId!!,
+                                    repository = repository,
+                                    onBack = { activePlaylistId = null }
                                 )
                             } else {
                                 when (currentNavTab) {
@@ -457,15 +500,7 @@ class MainActivity : ComponentActivity() {
                                                 }
                                             },
                                             onSelectPlaylist = { selectedPlaylist ->
-                                                coroutineScope.launch {
-                                                    app.database.musicDao().getSongsForPlaylist(selectedPlaylist.playlistId).collect { playlistSongs ->
-                                                        if (playlistSongs.isNotEmpty()) {
-                                                            PlaybackManager.playSong(playlistSongs.first(), playlistSongs)
-                                                        } else {
-                                                            Toast.makeText(context, "Playlist is empty", Toast.LENGTH_SHORT).show()
-                                                        }
-                                                    }
-                                                }
+                                                activePlaylistId = selectedPlaylist.playlistId
                                             },
                                             onRequestSafImport = {
                                                 safLauncher.launch(arrayOf("audio/*"))
@@ -475,6 +510,12 @@ class MainActivity : ComponentActivity() {
                                             },
                                             onOpenSettings = {
                                                 showSettingsScreen = true
+                                            },
+                                            onSaveMetadataOverride = { songId, title, artist, album, genre ->
+                                                coroutineScope.launch {
+                                                    repository.saveSongMetadataOverride(songId, title, artist, album, genre)
+                                                    Toast.makeText(context, "Saved metadata override permanently", Toast.LENGTH_SHORT).show()
+                                                }
                                             },
                                             customWallpaperUri = customWallpaperUri,
                                             wallpaperScrimAlpha = wallpaperScrimAlpha
@@ -502,6 +543,9 @@ class MainActivity : ComponentActivity() {
                                             onOpenServerSettings = { showServerSettingsScreen = true },
                                             refreshTrigger = exploreRefreshTrigger
                                         )
+                                    }
+                                    MainNavTab.RADIO -> {
+                                        RadioScreen()
                                     }
                                 }
                             }

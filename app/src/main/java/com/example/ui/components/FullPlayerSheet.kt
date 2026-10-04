@@ -331,13 +331,14 @@ fun FullPlayerSheet(
                 1 -> {
                     // Spotify-Style Synced Lyrics Tab
                     SyncedLyricsView(
-                        lrcLyrics = song.lrcLyrics,
+                        lrcLyrics = song.syncedLyrics ?: song.lrcLyrics,
                         songTitle = song.title,
                         songArtist = song.artist,
                         durationMs = song.durationMs,
                         currentPositionMs = effectivePositionMs,
                         onSeekRequested = { targetMs -> onSeekTo(targetMs) },
-                        onSaveCustomLyrics = { updatedLrc -> onSaveLyrics(song, updatedLrc) }
+                        onSaveCustomLyrics = { updatedLrc -> onSaveLyrics(song, updatedLrc) },
+                        song = song
                     )
                 }
                 2 -> {

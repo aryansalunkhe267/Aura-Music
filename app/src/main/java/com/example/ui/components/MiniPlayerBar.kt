@@ -44,6 +44,7 @@ import com.example.ui.theme.OneUITextSecondary
 import com.example.ui.theme.SpotifyGreen
 import com.example.utils.CachedSongArtwork
 import com.example.utils.cleanMetadataString
+import com.example.utils.rememberDebouncedClick
 
 @Composable
 fun MiniPlayerBar(
@@ -62,6 +63,10 @@ fun MiniPlayerBar(
     val progress = if (durationMs > 0) {
         (currentPositionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
     } else 0f
+
+    val debouncedFavorite = onToggleFavorite?.let { rememberDebouncedClick(300L, it) }
+    val debouncedPlayPause = rememberDebouncedClick(300L, onPlayPauseClick)
+    val debouncedNext = rememberDebouncedClick(300L, onNextClick)
 
     Box(
         modifier = modifier
@@ -125,7 +130,7 @@ fun MiniPlayerBar(
             // Favorite Button
             if (onToggleFavorite != null) {
                 IconButton(
-                    onClick = onToggleFavorite,
+                    onClick = { debouncedFavorite?.invoke() },
                     modifier = Modifier
                         .size(44.dp)
                         .testTag("mini_player_favorite")
@@ -141,7 +146,7 @@ fun MiniPlayerBar(
 
             // Explicit Controls: Play/Pause and Next
             IconButton(
-                onClick = onPlayPauseClick,
+                onClick = debouncedPlayPause,
                 modifier = Modifier
                     .size(44.dp)
                     .testTag("mini_player_play_pause")
@@ -155,7 +160,7 @@ fun MiniPlayerBar(
             }
 
             IconButton(
-                onClick = onNextClick,
+                onClick = debouncedNext,
                 modifier = Modifier
                     .size(44.dp)
                     .testTag("mini_player_next")

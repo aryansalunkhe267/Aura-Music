@@ -109,18 +109,34 @@ fun OnlineExploreScreen(
     var recentListensTracks by remember { mutableStateOf<List<SongEntity>>(emptyList()) }
     var rediscoverOfflineTracks by remember { mutableStateOf<List<SongEntity>>(emptyList()) }
 
-    // Curated catalog rails
-    val punjabiTop50 = remember { OnlineMusicCatalog.getTrendingNow() }
-    val hindiTrending = remember { OnlineMusicCatalog.getTopCharts() }
-    val marathiTopCharts = remember { OnlineMusicCatalog.getNewReleases() }
+    // Real trending charts state dynamically wired to NewPipeExtractor
+    var punjabiTop50 by remember { mutableStateOf<List<SongEntity>>(emptyList()) }
+    var hindiTrending by remember { mutableStateOf<List<SongEntity>>(emptyList()) }
+    var marathiTopCharts by remember { mutableStateOf<List<SongEntity>>(emptyList()) }
     val featuredPlaylists = remember { OnlineMusicCatalog.getFeaturedPlaylists() }
 
-    // Load personalized rails from taste vector
+    // Load personalized rails from taste vector and fetch real NewPipeExtractor trending charts
     LaunchedEffect(refreshTrigger) {
         val rails = personalizationRepository.getPersonalizedRails()
         madeForYouTracks = rails.madeForYou
         recentListensTracks = rails.basedOnRecentListens
         rediscoverOfflineTracks = rails.rediscoverOffline
+
+        // Fetch real, trending Punjabi and Hindi charts directly via NewPipeExtractor
+        coroutineScope.launch {
+            try {
+                val punjabi = StreamingApiClient.fetchTrendingPunjabiCharts()
+                if (punjabi.isNotEmpty()) punjabiTop50 = punjabi
+            } catch (_: Exception) {}
+            try {
+                val hindi = StreamingApiClient.fetchTrendingHindiCharts()
+                if (hindi.isNotEmpty()) hindiTrending = hindi
+            } catch (_: Exception) {}
+            try {
+                val marathi = StreamingApiClient.fetchTrendingMarathiCharts()
+                if (marathi.isNotEmpty()) marathiTopCharts = marathi
+            } catch (_: Exception) {}
+        }
     }
 
     // Dynamic multi-source search with debounce

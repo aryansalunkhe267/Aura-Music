@@ -118,7 +118,7 @@ object PlaybackManager {
                     recordCurrentTrackListenTime()
                     stopProgressTracker()
                 }
-                PulseMusicWidget.notifyWidgetUpdate(appContext)
+                PulseMusicWidget.notifyWidgetUpdate(appContext, isPlayingOverride = isPlayingNow)
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
@@ -140,7 +140,7 @@ object PlaybackManager {
                         _isBuffering.value = false
                     }
                 }
-                PulseMusicWidget.notifyWidgetUpdate(appContext)
+                PulseMusicWidget.notifyWidgetUpdate(appContext, isPlayingOverride = player.isPlaying)
             }
 
             override fun onPlayerError(error: PlaybackException) {
@@ -286,6 +286,8 @@ object PlaybackManager {
 
         mainHandler.post {
             val player = exoPlayer ?: return@post
+            val willPlay = !player.isPlaying
+            _isPlaying.value = willPlay
             if (player.isPlaying) {
                 player.pause()
             } else {
@@ -294,7 +296,7 @@ object PlaybackManager {
                 }
                 player.play()
             }
-            PulseMusicWidget.notifyWidgetUpdate(appContext)
+            PulseMusicWidget.notifyWidgetUpdate(appContext, isPlayingOverride = willPlay)
         }
     }
 
@@ -463,142 +465,144 @@ object PlaybackManager {
 
         mainScope.launch {
             try {
-                var playSong = song
+                // Background Preparation: Resolve lyrics, bridge online streams, and construct MediaItem strictly on Dispatchers.IO
+                val (playSong, mediaItem) = kotlinx.coroutines.withContext(Dispatchers.IO) {
+                    var current = song
 
-                // Offline Lyrics Display: resolve local lyrics immediately (Room CustomLyrics, embedded ID3 USLT, matching .lrc)
-                if (playSong.lrcLyrics.isNullOrBlank() && playSong.syncedLyrics.isNullOrBlank()) {
-                    val localLyrics = repository.resolveLyricsForSong(playSong)
-                    if (!localLyrics.isNullOrBlank()) {
-                        playSong = playSong.copy(
-                            lrcLyrics = localLyrics,
-                            syncedLyrics = localLyrics
-                        )
-                        _currentSong.value = playSong
-                    }
-                }
-
-                // Bridge YouTube / Spotify imported tracks or Online streams to direct high-quality m4a audio stream
-                if ((song.contentUri.startsWith("youtube://") || song.contentUri.startsWith("piped://")) && song.streamUrl.isNullOrBlank()) {
-                    try {
-                        val result = com.example.api.StreamingApiClient.extractDirectStream(
-                            songOrUrl = song.contentUri,
-                            fallbackTitle = song.title,
-                            fallbackArtist = song.artist
-                        )
-                        if (result != null) {
-                            playSong = song.copy(
-                                streamUrl = result.streamUrl,
-                                albumArtUri = song.albumArtUri ?: result.coverArtUrl,
-                                coverArtUrl = song.coverArtUrl ?: result.coverArtUrl,
-                                syncedLyrics = song.syncedLyrics ?: result.lrcLyrics,
-                                lrcLyrics = song.lrcLyrics ?: result.lrcLyrics,
-                                durationMs = if (song.durationMs > 0) song.durationMs else (result.durationMs ?: song.durationMs)
+                    // Offline Lyrics Display: resolve local lyrics immediately (Room CustomLyrics, embedded ID3 USLT, matching .lrc)
+                    if (current.lrcLyrics.isNullOrBlank() && current.syncedLyrics.isNullOrBlank()) {
+                        val localLyrics = repository.resolveLyricsForSong(current)
+                        if (!localLyrics.isNullOrBlank()) {
+                            current = current.copy(
+                                lrcLyrics = localLyrics,
+                                syncedLyrics = localLyrics
                             )
-                            repository.insertOnlineTrack(playSong)
-                            _currentSong.value = playSong
                         }
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Direct stream resolution failed for ${song.title}: ${e.message}")
-                    }
-                } else if (song.contentUri.startsWith("spotify://") || (song.sourceType == "ONLINE" && song.streamUrl.isNullOrBlank())) {
-                    Log.d(TAG, "Bridging track '${song.title}' to direct audio stream...")
-                    var resolved = false
-                    try {
-                        val searchResults = com.example.api.StreamingApiClient.searchSongs("${song.title} ${song.artist}")
-                        val firstResult = searchResults.firstOrNull()
-                        if (firstResult != null) {
-                            val directResult = com.example.api.StreamingApiClient.extractDirectStream(
-                                songOrUrl = firstResult.contentUri,
-                                fallbackTitle = song.title,
-                                fallbackArtist = song.artist
-                            )
-                            if (directResult != null) {
-                                playSong = song.copy(
-                                    contentUri = firstResult.contentUri,
-                                    streamUrl = directResult.streamUrl,
-                                    albumArtUri = song.albumArtUri ?: directResult.coverArtUrl ?: firstResult.coverArtUrl,
-                                    coverArtUrl = song.coverArtUrl ?: directResult.coverArtUrl ?: firstResult.coverArtUrl,
-                                    syncedLyrics = song.syncedLyrics ?: directResult.lrcLyrics,
-                                    lrcLyrics = song.lrcLyrics ?: directResult.lrcLyrics,
-                                    durationMs = if (song.durationMs > 0) song.durationMs else (directResult.durationMs ?: firstResult.durationMs)
-                                )
-                                repository.insertOnlineTrack(playSong)
-                                _currentSong.value = playSong
-                                resolved = true
-                            }
-                        }
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Direct stream bridge failed for ${song.title}: ${e.message}")
                     }
 
-                    if (!resolved) {
+                    // Bridge YouTube / Spotify imported tracks or Online streams to direct high-quality m4a audio stream
+                    if ((current.contentUri.startsWith("youtube://") || current.contentUri.startsWith("piped://")) && current.streamUrl.isNullOrBlank()) {
                         try {
-                            val searchResp = JioSaavnApiClient.api.searchSongs("${song.title} ${song.artist}", limit = 1)
-                            val best = searchResp.body()?.data?.results?.firstOrNull()
-                            if (best != null) {
-                                val mapped = JioSaavnApiClient.mapToSongEntity(best)
-                                playSong = song.copy(
-                                    streamUrl = mapped.streamUrl,
-                                    contentUri = mapped.contentUri,
-                                    albumArtUri = song.albumArtUri ?: mapped.albumArtUri,
-                                    coverArtUrl = song.coverArtUrl ?: mapped.coverArtUrl
+                            val result = com.example.api.StreamingApiClient.extractDirectStream(
+                                songOrUrl = current.contentUri,
+                                fallbackTitle = current.title,
+                                fallbackArtist = current.artist
+                            )
+                            if (result != null) {
+                                current = current.copy(
+                                    streamUrl = result.streamUrl,
+                                    albumArtUri = current.albumArtUri ?: result.coverArtUrl,
+                                    coverArtUrl = current.coverArtUrl ?: result.coverArtUrl,
+                                    syncedLyrics = current.syncedLyrics ?: result.lrcLyrics,
+                                    lrcLyrics = current.lrcLyrics ?: result.lrcLyrics,
+                                    durationMs = if (current.durationMs > 0) current.durationMs else (result.durationMs ?: current.durationMs)
                                 )
-                                repository.insertOnlineTrack(playSong)
-                                _currentSong.value = playSong
+                                repository.insertOnlineTrack(current)
                             }
                         } catch (e: Exception) {
-                            Log.w(TAG, "JioSaavn fallback bridge failed for ${song.title}: ${e.message}")
+                            Log.w(TAG, "Direct stream resolution failed for ${current.title}: ${e.message}")
                         }
-                    }
-                }
-
-                // Enrich online lyrics asynchronously if missing
-                if (playSong.lrcLyrics.isNullOrBlank() && (playSong.sourceType == "ONLINE" || !playSong.streamUrl.isNullOrBlank())) {
-                    mainScope.launch(Dispatchers.IO) {
+                    } else if (current.contentUri.startsWith("spotify://") || (current.sourceType == "ONLINE" && current.streamUrl.isNullOrBlank())) {
+                        Log.d(TAG, "Bridging track '${current.title}' to direct audio stream...")
+                        var resolved = false
                         try {
-                            val onlineLrc = com.example.data.OnlineMusicCatalog.fetchSyncedLyrics(playSong.title, playSong.artist)
-                            if (!onlineLrc.isNullOrBlank()) {
-                                val enrichedSong = playSong.copy(
-                                    lrcLyrics = onlineLrc,
-                                    syncedLyrics = onlineLrc
+                            val searchResults = com.example.api.StreamingApiClient.searchSongs("${current.title} ${current.artist}")
+                            val firstResult = searchResults.firstOrNull()
+                            if (firstResult != null) {
+                                val directResult = com.example.api.StreamingApiClient.extractDirectStream(
+                                    songOrUrl = firstResult.contentUri,
+                                    fallbackTitle = current.title,
+                                    fallbackArtist = current.artist
                                 )
-                                repository.insertOnlineTrack(enrichedSong)
-                                if (_currentSong.value?.id == playSong.id) {
-                                    _currentSong.value = enrichedSong
+                                if (directResult != null) {
+                                    current = current.copy(
+                                        contentUri = firstResult.contentUri,
+                                        streamUrl = directResult.streamUrl,
+                                        albumArtUri = current.albumArtUri ?: directResult.coverArtUrl ?: firstResult.coverArtUrl,
+                                        coverArtUrl = current.coverArtUrl ?: directResult.coverArtUrl ?: firstResult.coverArtUrl,
+                                        syncedLyrics = current.syncedLyrics ?: directResult.lrcLyrics,
+                                        lrcLyrics = current.lrcLyrics ?: directResult.lrcLyrics,
+                                        durationMs = if (current.durationMs > 0) current.durationMs else (directResult.durationMs ?: firstResult.durationMs)
+                                    )
+                                    repository.insertOnlineTrack(current)
+                                    resolved = true
                                 }
-                                Log.i(TAG, "Enriched online synchronized lyrics for '${playSong.title}'")
                             }
                         } catch (e: Exception) {
-                            Log.w(TAG, "Failed enriching online lyrics for ${playSong.title}: ${e.message}")
+                            Log.w(TAG, "Direct stream bridge failed for ${current.title}: ${e.message}")
+                        }
+
+                        if (!resolved) {
+                            try {
+                                val searchResp = JioSaavnApiClient.api.searchSongs("${current.title} ${current.artist}", limit = 1)
+                                val best = searchResp.body()?.data?.results?.firstOrNull()
+                                if (best != null) {
+                                    val mapped = JioSaavnApiClient.mapToSongEntity(best)
+                                    current = current.copy(
+                                        streamUrl = mapped.streamUrl,
+                                        contentUri = mapped.contentUri,
+                                        albumArtUri = current.albumArtUri ?: mapped.albumArtUri,
+                                        coverArtUrl = current.coverArtUrl ?: mapped.coverArtUrl
+                                    )
+                                    repository.insertOnlineTrack(current)
+                                }
+                            } catch (e: Exception) {
+                                Log.w(TAG, "JioSaavn fallback bridge failed for ${current.title}: ${e.message}")
+                            }
                         }
                     }
+
+                    // Enrich online lyrics asynchronously if missing
+                    if (current.lrcLyrics.isNullOrBlank() && (current.sourceType == "ONLINE" || !current.streamUrl.isNullOrBlank())) {
+                        mainScope.launch(Dispatchers.IO) {
+                            try {
+                                val onlineLrc = com.example.data.OnlineMusicCatalog.fetchSyncedLyrics(current.title, current.artist)
+                                if (!onlineLrc.isNullOrBlank()) {
+                                    val enrichedSong = current.copy(
+                                        lrcLyrics = onlineLrc,
+                                        syncedLyrics = onlineLrc
+                                    )
+                                    repository.insertOnlineTrack(enrichedSong)
+                                    if (_currentSong.value?.id == current.id) {
+                                        _currentSong.value = enrichedSong
+                                    }
+                                    Log.i(TAG, "Enriched online synchronized lyrics for '${current.title}'")
+                                }
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Failed enriching online lyrics for ${current.title}: ${e.message}")
+                            }
+                        }
+                    }
+
+                    val playUri = resolvePlayableUri(current)
+
+                    val metadata = MediaMetadata.Builder()
+                        .setTitle(current.title)
+                        .setArtist(current.artist)
+                        .setAlbumTitle(current.album)
+                        .setArtworkUri(current.albumArtUri?.let { Uri.parse(it) } ?: current.coverArtUrl?.let { Uri.parse(it) })
+                        .build()
+
+                    val mediaItemBuilder = MediaItem.Builder()
+                        .setMediaId(current.id.toString())
+                        .setUri(playUri)
+                        .setMediaMetadata(metadata)
+
+                    val uriStr = playUri.toString().lowercase()
+                    if (uriStr.contains(".m4a") || uriStr.contains("mime=audio%2fmp4") || uriStr.contains("mime=audio/mp4") || current.sourceType == "ONLINE") {
+                        mediaItemBuilder.setMimeType(androidx.media3.common.MimeTypes.AUDIO_MP4)
+                    }
+
+                    Pair(current, mediaItemBuilder.build())
                 }
 
-                val playUri = resolvePlayableUri(playSong)
-
-                val metadata = MediaMetadata.Builder()
-                    .setTitle(playSong.title)
-                    .setArtist(playSong.artist)
-                    .setAlbumTitle(playSong.album)
-                    .setArtworkUri(playSong.albumArtUri?.let { Uri.parse(it) } ?: playSong.coverArtUrl?.let { Uri.parse(it) })
-                    .build()
-
-                val mediaItemBuilder = MediaItem.Builder()
-                    .setMediaId(playSong.id.toString())
-                    .setUri(playUri)
-                    .setMediaMetadata(metadata)
-
-                val uriStr = playUri.toString().lowercase()
-                if (uriStr.contains(".m4a") || uriStr.contains("mime=audio%2fmp4") || uriStr.contains("mime=audio/mp4") || playSong.sourceType == "ONLINE") {
-                    mediaItemBuilder.setMimeType(androidx.media3.common.MimeTypes.AUDIO_MP4)
-                }
-
-                val mediaItem = mediaItemBuilder.build()
-
+                // Update UI state and command player on the Main thread
+                _currentSong.value = playSong
                 player.setMediaItem(mediaItem)
                 player.prepare()
                 player.play()
-                Log.d(TAG, "Playing track ${playSong.id} via URI: $playUri")
+                PulseMusicWidget.notifyWidgetUpdate(appContext, isPlayingOverride = true)
+                Log.d(TAG, "Playing track ${playSong.id} via background-prepared media item")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed executing playback for ${song.title}: ${e.message}", e)
             }

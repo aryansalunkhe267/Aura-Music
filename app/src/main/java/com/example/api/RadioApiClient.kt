@@ -30,11 +30,16 @@ data class RadioStationItem(
 object RadioApiClient {
 
     private const val TAG = "RadioApiClient"
-    private const val BASE_URL = "https://de1.api.radio-browser.info/json"
+    private val MIRROR_HOSTS = listOf(
+        "https://all.api.radio-browser.info/json",
+        "https://de1.api.radio-browser.info/json",
+        "https://nl1.api.radio-browser.info/json",
+        "https://at1.api.radio-browser.info/json"
+    )
 
     private val httpClient: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(12, TimeUnit.SECONDS)
-        .readTimeout(15, TimeUnit.SECONDS)
+        .connectTimeout(8, TimeUnit.SECONDS)
+        .readTimeout(10, TimeUnit.SECONDS)
         .build()
 
     suspend fun searchStations(
@@ -45,65 +50,71 @@ object RadioApiClient {
         limit: Int = 40
     ): List<RadioStationItem> = withContext(Dispatchers.IO) {
         val stations = mutableListOf<RadioStationItem>()
-        try {
-            var url = "$BASE_URL/stations/search?limit=$limit&order=votes&reverse=true&hidebroken=true"
-            if (query.isNotBlank()) {
-                url += "&name=${Uri.encode(query.trim())}"
-            }
-            if (country.isNotBlank()) {
-                url += "&country=${Uri.encode(country.trim())}"
-            }
-            if (language.isNotBlank()) {
-                url += "&language=${Uri.encode(language.trim().lowercase())}"
-            }
-            if (tag.isNotBlank()) {
-                url += "&tag=${Uri.encode(tag.trim().lowercase())}"
-            }
 
-            val request = Request.Builder()
-                .url(url)
-                .header("User-Agent", "PulseMusic/2.0 (Android; OpenRadio)")
-                .build()
-
-            httpClient.newCall(request).execute().use { response ->
-                if (response.isSuccessful) {
-                    val body = response.body?.string()
-                    if (!body.isNullOrBlank()) {
-                        val jsonArray = JSONArray(body)
-                        for (i in 0 until jsonArray.length()) {
-                            val obj = jsonArray.getJSONObject(i)
-                            val stream = obj.optString("url_resolved").takeIf { it.isNotBlank() }
-                                ?: obj.optString("url").takeIf { it.isNotBlank() }
-                                ?: continue
-
-                            val name = obj.optString("name").trim()
-                            if (name.isBlank()) continue
-
-                            val uuid = obj.optString("stationuuid").ifBlank { (name.hashCode().toString()) }
-                            val favicon = obj.optString("favicon").takeIf { it.isNotBlank() && it.startsWith("http") }
-
-                            stations.add(
-                                RadioStationItem(
-                                    id = uuid,
-                                    name = name,
-                                    streamUrl = stream,
-                                    favicon = favicon,
-                                    country = obj.optString("country").takeIf { it.isNotBlank() },
-                                    language = obj.optString("language").takeIf { it.isNotBlank() },
-                                    tags = obj.optString("tags").takeIf { it.isNotBlank() },
-                                    codec = obj.optString("codec").takeIf { it.isNotBlank() },
-                                    bitrate = obj.optInt("bitrate", 0),
-                                    votes = obj.optInt("votes", 0)
-                                )
-                            )
-                        }
-                    }
-                } else {
-                    Log.w(TAG, "Radio search returned HTTP ${response.code}")
+        for (host in MIRROR_HOSTS) {
+            try {
+                var url = "$host/stations/search?limit=$limit&order=votes&reverse=true&hidebroken=true"
+                if (query.isNotBlank()) {
+                    url += "&name=${Uri.encode(query.trim())}"
                 }
+                if (country.isNotBlank()) {
+                    url += "&country=${Uri.encode(country.trim())}"
+                }
+                if (language.isNotBlank()) {
+                    url += "&language=${Uri.encode(language.trim().lowercase())}"
+                }
+                if (tag.isNotBlank()) {
+                    url += "&tag=${Uri.encode(tag.trim().lowercase())}"
+                }
+
+                val request = Request.Builder()
+                    .url(url)
+                    .header("User-Agent", "PulseMusic/2.0 (Android; OpenRadio)")
+                    .build()
+
+                httpClient.newCall(request).execute().use { response ->
+                    if (response.isSuccessful) {
+                        val body = response.body?.string()
+                        if (!body.isNullOrBlank()) {
+                            val jsonArray = JSONArray(body)
+                            for (i in 0 until jsonArray.length()) {
+                                val obj = jsonArray.getJSONObject(i)
+                                val stream = obj.optString("url_resolved").takeIf { it.isNotBlank() }
+                                    ?: obj.optString("url").takeIf { it.isNotBlank() }
+                                    ?: continue
+
+                                val name = obj.optString("name").trim()
+                                if (name.isBlank()) continue
+
+                                val uuid = obj.optString("stationuuid").ifBlank { (name.hashCode().toString()) }
+                                val favicon = obj.optString("favicon").takeIf { it.isNotBlank() && it.startsWith("http") }
+
+                                stations.add(
+                                    RadioStationItem(
+                                        id = uuid,
+                                        name = name,
+                                        streamUrl = stream,
+                                        favicon = favicon,
+                                        country = obj.optString("country").takeIf { it.isNotBlank() },
+                                        language = obj.optString("language").takeIf { it.isNotBlank() },
+                                        tags = obj.optString("tags").takeIf { it.isNotBlank() },
+                                        codec = obj.optString("codec").takeIf { it.isNotBlank() },
+                                        bitrate = obj.optInt("bitrate", 0),
+                                        votes = obj.optInt("votes", 0)
+                                    )
+                                )
+                            }
+                            if (stations.isNotEmpty()) {
+                                return@withContext stations
+                            }
+                        }
+                    } else {
+                        Log.w(TAG, "Radio search on $host returned HTTP ${response.code}")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Mirror $host failed: ${e.message}")
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed querying radio stations: ${e.message}", e)
         }
 
         // Return verified stations or high-reliability curated fallbacks if network fails

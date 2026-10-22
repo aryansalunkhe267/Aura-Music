@@ -9,7 +9,8 @@ data class LyricLine(
 
 object LrcParser {
 
-    private val LRC_TIME_PATTERN = Pattern.compile("\\[(\\d{1,2}):(\\d{2})(?:[.:](\\d{2,3}))?]")
+    // Supports standard [mm:ss.xx] and high-resolution [mm:ss.xxx] timestamps, with '.' or ':' separators
+    private val LRC_TIME_PATTERN = Pattern.compile("\\[(\\d{1,3}):(\\d{2})(?:[.:](\\d{2,3}))?]")
 
     /**
      * Parses a .lrc formatted string into ordered LyricLine objects.
@@ -17,6 +18,7 @@ object LrcParser {
      * - Discards parenthetical / bracketed English translations (e.g. "(Your love is saffron)").
      * - Transliterates original Hindi, Punjabi, or Marathi words into standard Latin/English alphabet
      *   without altering the native tongue (e.g., "Kesariya tera ishq hai piya").
+     * - Safely ignores malformed lines and headers (e.g. [ti:...], [ar:...]).
      */
     fun parse(lrcContent: String?): List<LyricLine> {
         if (lrcContent.isNullOrBlank()) return emptyList()
@@ -25,40 +27,45 @@ object LrcParser {
         val result = mutableListOf<LyricLine>()
 
         for (line in lines) {
-            val trimmed = line.trim()
-            if (trimmed.isEmpty()) continue
+            try {
+                val trimmed = line.trim()
+                if (trimmed.isEmpty()) continue
 
-            val matcher = LRC_TIME_PATTERN.matcher(trimmed)
-            val timestamps = mutableListOf<Long>()
-            var lastMatchEnd = 0
+                val matcher = LRC_TIME_PATTERN.matcher(trimmed)
+                val timestamps = mutableListOf<Long>()
+                var lastMatchEnd = 0
 
-            while (matcher.find()) {
-                val minStr = matcher.group(1) ?: "0"
-                val secStr = matcher.group(2) ?: "0"
-                val fracStr = matcher.group(3) ?: "0"
+                while (matcher.find()) {
+                    val minStr = matcher.group(1) ?: "0"
+                    val secStr = matcher.group(2) ?: "0"
+                    val fracStr = matcher.group(3) ?: "0"
 
-                val minutes = minStr.toLongOrNull() ?: 0L
-                val seconds = secStr.toLongOrNull() ?: 0L
-                val millis = when (fracStr.length) {
-                    2 -> (fracStr.toLongOrNull() ?: 0L) * 10
-                    3 -> fracStr.toLongOrNull() ?: 0L
-                    else -> 0L
+                    val minutes = minStr.toLongOrNull() ?: 0L
+                    val seconds = secStr.toLongOrNull() ?: 0L
+                    val millis = when (fracStr.length) {
+                        2 -> (fracStr.toLongOrNull() ?: 0L) * 10L // e.g. .50 -> 500ms
+                        3 -> fracStr.toLongOrNull() ?: 0L         // e.g. .500 -> 500ms
+                        1 -> (fracStr.toLongOrNull() ?: 0L) * 100L
+                        else -> 0L
+                    }
+
+                    val totalMs = minutes * 60_000L + seconds * 1000L + millis
+                    timestamps.add(totalMs)
+                    lastMatchEnd = matcher.end()
                 }
 
-                val totalMs = minutes * 60_000L + seconds * 1000L + millis
-                timestamps.add(totalMs)
-                lastMatchEnd = matcher.end()
-            }
-
-            if (timestamps.isNotEmpty()) {
-                val rawLyricText = trimmed.substring(lastMatchEnd).trim()
-                // Apply strict transliteration & translation-stripping
-                val sanitizedLyric = IndicTransliterator.cleanAndTransliterate(rawLyricText)
-                if (sanitizedLyric.isNotBlank()) {
-                    for (time in timestamps) {
-                        result.add(LyricLine(timeMs = time, text = sanitizedLyric))
+                if (timestamps.isNotEmpty()) {
+                    val rawLyricText = trimmed.substring(lastMatchEnd).trim()
+                    // Apply strict transliteration & translation-stripping
+                    val sanitizedLyric = IndicTransliterator.cleanAndTransliterate(rawLyricText)
+                    if (sanitizedLyric.isNotBlank()) {
+                        for (time in timestamps) {
+                            result.add(LyricLine(timeMs = time, text = sanitizedLyric))
+                        }
                     }
                 }
+            } catch (_: Exception) {
+                // Ignore malformed lines
             }
         }
 

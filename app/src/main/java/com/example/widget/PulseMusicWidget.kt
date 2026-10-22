@@ -96,10 +96,8 @@ class PulseMusicWidget : GlanceAppWidget() {
             val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             val song = PlaybackManager.currentSong.value
 
-            // Determine accurate playback state: player -> PlaybackManager -> stored persistent prefs
+            // Determine accurate playback state: check PlaybackManager StateFlow first, fallback to persistent prefs
             val isPlaying = if (PlaybackManager.getPlayer() != null) {
-                PlaybackManager.isPlayerPlaying()
-            } else if (song != null) {
                 PlaybackManager.isPlaying.value
             } else {
                 prefs.getBoolean(KEY_IS_PLAYING, false)
@@ -138,7 +136,7 @@ class PulseMusicWidget : GlanceAppWidget() {
                     modifier = GlanceModifier.fillMaxSize(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Artwork Thumbnail or Pulse Logo
+                    // Artwork Thumbnail or Pulse Logo (safely downsampled for RemoteViews IPC)
                     Box(
                         modifier = GlanceModifier
                             .size(54.dp)
@@ -146,26 +144,11 @@ class PulseMusicWidget : GlanceAppWidget() {
                             .background(ColorProvider(Color(0xFF222834))),
                         contentAlignment = Alignment.Center
                     ) {
-                        var loadedBitmap: Bitmap? = null
-                        if (!artUri.isNullOrBlank()) {
-                            try {
-                                val uri = Uri.parse(artUri)
-                                if (uri.scheme == "file") {
-                                    val file = java.io.File(uri.path ?: "")
-                                    if (file.exists()) {
-                                        loadedBitmap = BitmapFactory.decodeFile(file.absolutePath)
-                                    }
-                                } else {
-                                    context.contentResolver.openInputStream(uri)?.use { stream ->
-                                        loadedBitmap = BitmapFactory.decodeStream(stream)
-                                    }
-                                }
-                            } catch (_: Exception) {}
-                        }
+                        val loadedBitmap: Bitmap? = decodeDownsampledBitmap(context, artUri)
 
                         if (loadedBitmap != null) {
                             Image(
-                                provider = ImageProvider(loadedBitmap!!),
+                                provider = ImageProvider(loadedBitmap),
                                 contentDescription = "Artwork",
                                 modifier = GlanceModifier.fillMaxSize().cornerRadius(14.dp)
                             )
@@ -266,5 +249,53 @@ class PulseMusicWidget : GlanceAppWidget() {
                 }
             }
         }
+    }
+}
+
+/**
+ * Safely downsamples artwork to a maximum of 128x128 to prevent RemoteViews IPC
+ * buffer overflows (TransactionTooLargeException) and eliminate widget rendering lag.
+ */
+private fun decodeDownsampledBitmap(context: Context, artUri: String?, targetSize: Int = 128): Bitmap? {
+    if (artUri.isNullOrBlank()) return null
+    return try {
+        val uri = Uri.parse(artUri)
+        val options = BitmapFactory.Options().apply {
+            inJustDecodeBounds = true
+        }
+
+        // Measure dimensions first
+        if (uri.scheme == "file") {
+            val file = java.io.File(uri.path ?: "")
+            if (!file.exists()) return null
+            BitmapFactory.decodeFile(file.absolutePath, options)
+        } else {
+            context.contentResolver.openInputStream(uri)?.use { stream ->
+                BitmapFactory.decodeStream(stream, null, options)
+            }
+        }
+
+        if (options.outWidth <= 0 || options.outHeight <= 0) return null
+
+        var sampleSize = 1
+        while (options.outWidth / (sampleSize * 2) >= targetSize && options.outHeight / (sampleSize * 2) >= targetSize) {
+            sampleSize *= 2
+        }
+
+        val decodeOptions = BitmapFactory.Options().apply {
+            inSampleSize = sampleSize
+            inPreferredConfig = Bitmap.Config.RGB_565 // Memory-efficient bitmap format
+        }
+
+        if (uri.scheme == "file") {
+            val file = java.io.File(uri.path ?: "")
+            BitmapFactory.decodeFile(file.absolutePath, decodeOptions)
+        } else {
+            context.contentResolver.openInputStream(uri)?.use { stream ->
+                BitmapFactory.decodeStream(stream, null, decodeOptions)
+            }
+        }
+    } catch (_: Exception) {
+        null
     }
 }

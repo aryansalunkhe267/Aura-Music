@@ -25,21 +25,34 @@ class SpotifyWebRepository(
         val errorMessage: String? = null
     )
 
-    suspend fun importSpotifyData(spDcCookie: String): ImportResult = withContext(Dispatchers.IO) {
+    suspend fun importSpotifyData(tokenOrCookie: String): ImportResult = withContext(Dispatchers.IO) {
         try {
-            Log.d(TAG, "Minting Spotify Web Bearer Token using sp_dc cookie...")
-            val cookieHeader = "sp_dc=$spDcCookie"
-            val tokenResp = SpotifyApiClient.authApi.getAccessToken(cookieHeader)
+            val raw = tokenOrCookie.trim().removePrefix("Bearer ").trim()
+            val authHeader: String
 
-            if (!tokenResp.isSuccessful || tokenResp.body()?.accessToken.isNullOrBlank()) {
-                val err = "Failed to mint token from Spotify web endpoint: HTTP ${tokenResp.code()}"
-                Log.e(TAG, err)
-                return@withContext ImportResult(isSuccess = false, errorMessage = err)
+            if (raw.startsWith("BQ") || (raw.length > 80 && !raw.startsWith("AQ"))) {
+                // Direct OAuth Bearer Token from Spotify Developer Authorization
+                Log.i(TAG, "Using direct Spotify OAuth Bearer Token")
+                authHeader = "Bearer $raw"
+            } else {
+                Log.d(TAG, "Attempting to mint Spotify Web Bearer Token using sp_dc session cookie...")
+                val cookieHeader = "sp_dc=$raw"
+                val tokenResp = try {
+                    SpotifyApiClient.authApi.getAccessToken(cookieHeader)
+                } catch (e: Exception) {
+                    null
+                }
+
+                if (tokenResp != null && tokenResp.isSuccessful && !tokenResp.body()?.accessToken.isNullOrBlank()) {
+                    val token = tokenResp.body()!!.accessToken!!
+                    authHeader = "Bearer $token"
+                    Log.i(TAG, "Successfully minted active Spotify bearer token")
+                } else {
+                    // Fallback: in case raw was an access token or personal token
+                    Log.w(TAG, "Web token endpoint rejected cookie; attempting direct token fallback")
+                    authHeader = "Bearer $raw"
+                }
             }
-
-            val accessToken = tokenResp.body()!!.accessToken!!
-            val authHeader = "Bearer $accessToken"
-            Log.i(TAG, "Successfully minted active Spotify bearer token")
 
             var totalLiked = 0
             var totalPlaylists = 0

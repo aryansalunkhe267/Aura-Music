@@ -15,7 +15,7 @@ import androidx.room.RoomDatabase
         CustomLyricsEntity::class,
         SongOverrideEntity::class
     ],
-    version = 6,
+    version = 7,
     exportSchema = false
 )
 abstract class MusicDatabase : RoomDatabase() {

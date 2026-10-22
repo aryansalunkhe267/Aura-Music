@@ -12,22 +12,28 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.QueueMusic
+import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -47,12 +53,15 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -91,6 +100,37 @@ fun PlaylistDetailScreen(
     var isLoading by remember { mutableStateOf(true) }
     var showAddTracksSheet by remember { mutableStateOf(false) }
 
+    // Multi-select state
+    var selectedSongIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
+    val isSelectionMode = selectedSongIds.isNotEmpty()
+
+    fun toggleSelection(songId: Long) {
+        selectedSongIds = if (selectedSongIds.contains(songId)) {
+            selectedSongIds - songId
+        } else {
+            selectedSongIds + songId
+        }
+    }
+
+    fun setMultipleSongsSelected(songIds: Collection<Long>, isSelected: Boolean) {
+        selectedSongIds = if (isSelected) {
+            selectedSongIds + songIds
+        } else {
+            selectedSongIds - songIds.toSet()
+        }
+    }
+
+    fun clearSelection() {
+        selectedSongIds = emptySet()
+    }
+
+    val listState = rememberLazyListState()
+    var dragSelectMode by remember { mutableStateOf<Boolean?>(null) }
+    var initialDragIndex by remember { mutableIntStateOf(-1) }
+
+    val currentSongs by rememberUpdatedState(songs)
+    val currentSelectedIds by rememberUpdatedState(selectedSongIds)
+
     val librarySongs by repository.librarySongs.collectAsStateWithLifecycle(emptyList())
     val currentSong by PlaybackManager.currentSong.collectAsStateWithLifecycle()
 
@@ -117,50 +157,115 @@ fun PlaylistDetailScreen(
             .background(OneUIDarkBackground)
             .testTag("playlist_detail_screen")
     ) {
-        // Top App Bar
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            IconButton(
-                onClick = onBack,
-                modifier = Modifier.testTag("playlist_back_button")
+        // Top App Bar / Contextual Action Bar (CAB)
+        if (isSelectionMode) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f), RoundedCornerShape(16.dp))
+                    .padding(horizontal = 6.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Back",
-                    tint = OneUITextPrimary
-                )
-            }
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(
-                text = playlist?.name ?: "Playlist",
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Bold,
-                color = OneUITextPrimary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f)
-            )
-
-            // Delete Playlist (if user-created)
-            if (playlist?.isAutoGenerated == false) {
-                IconButton(
-                    onClick = {
-                        coroutineScope.launch {
-                            repository.deletePlaylist(playlistId)
-                            Toast.makeText(context, "Playlist deleted", Toast.LENGTH_SHORT).show()
-                            onBack()
-                        }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = { clearSelection() }) {
+                        Icon(Icons.Default.Close, contentDescription = "Cancel Selection", tint = OneUITextPrimary)
                     }
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "${selectedSongIds.size} Selected",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = OneUITextPrimary
+                    )
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    // Select All / Deselect All
+                    IconButton(onClick = {
+                        selectedSongIds = if (selectedSongIds.size == songs.size) {
+                            emptySet()
+                        } else {
+                            songs.map { it.id }.toSet()
+                        }
+                    }) {
+                        Icon(Icons.Default.SelectAll, contentDescription = "Select All", tint = OneUITextPrimary)
+                    }
+
+                    // Play Next
+                    IconButton(onClick = {
+                        val selectedList = songs.filter { selectedSongIds.contains(it.id) }
+                        if (selectedList.isNotEmpty()) {
+                            PlaybackManager.playNext(selectedList)
+                            Toast.makeText(context, "Added ${selectedList.size} tracks to Play Next", Toast.LENGTH_SHORT).show()
+                            clearSelection()
+                        }
+                    }) {
+                        Icon(Icons.AutoMirrored.Filled.QueueMusic, contentDescription = "Play Next", tint = OneUITextPrimary)
+                    }
+
+                    // Batch Remove from Playlist
+                    IconButton(onClick = {
+                        val toRemove = selectedSongIds.toList()
+                        coroutineScope.launch {
+                            toRemove.forEach { sId ->
+                                repository.removeSongFromPlaylist(playlistId, sId)
+                            }
+                            songs = songs.filter { !selectedSongIds.contains(it.id) }
+                            Toast.makeText(context, "Removed ${toRemove.size} tracks from playlist", Toast.LENGTH_SHORT).show()
+                            clearSelection()
+                        }
+                    }) {
+                        Icon(Icons.Default.Delete, contentDescription = "Remove Selected", tint = Color(0xFFFF5252))
+                    }
+                }
+            }
+        } else {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(
+                    onClick = onBack,
+                    modifier = Modifier.testTag("playlist_back_button")
                 ) {
                     Icon(
-                        imageVector = Icons.Default.DeleteOutline,
-                        contentDescription = "Delete Playlist",
-                        tint = Color(0xFFFF5252)
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Back",
+                        tint = OneUITextPrimary
                     )
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = playlist?.name ?: "Playlist",
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = OneUITextPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+
+                // Delete Playlist (if user-created)
+                if (playlist?.isAutoGenerated == false) {
+                    IconButton(
+                        onClick = {
+                            coroutineScope.launch {
+                                repository.deletePlaylist(playlistId)
+                                Toast.makeText(context, "Playlist deleted", Toast.LENGTH_SHORT).show()
+                                onBack()
+                            }
+                        }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.DeleteOutline,
+                            contentDescription = "Delete Playlist",
+                            tint = Color(0xFFFF5252)
+                        )
+                    }
                 }
             }
         }
@@ -171,9 +276,57 @@ fun PlaylistDetailScreen(
             }
         } else {
             LazyColumn(
+                state = listState,
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(bottom = 120.dp)
+                    .pointerInput(Unit) {
+                        detectDragGesturesAfterLongPress(
+                            onDragStart = { offset ->
+                                val hitItem = listState.layoutInfo.visibleItemsInfo.firstOrNull { item ->
+                                    offset.y.toInt() in item.offset..(item.offset + item.size)
+                                }
+                                if (hitItem != null) {
+                                    val trackIndex = hitItem.index - 1
+                                    if (trackIndex in currentSongs.indices) {
+                                        val song = currentSongs[trackIndex]
+                                        val isCurrentlySelected = currentSelectedIds.contains(song.id)
+                                        val willSelect = !isCurrentlySelected
+                                        dragSelectMode = willSelect
+                                        initialDragIndex = trackIndex
+                                        toggleSelection(song.id)
+                                    }
+                                }
+                            },
+                            onDrag = { change, _ ->
+                                change.consume()
+                                val hitItem = listState.layoutInfo.visibleItemsInfo.firstOrNull { item ->
+                                    change.position.y.toInt() in item.offset..(item.offset + item.size)
+                                }
+                                if (hitItem != null) {
+                                    val currentIndex = hitItem.index - 1
+                                    if (currentIndex in currentSongs.indices) {
+                                        val willSelect = dragSelectMode ?: true
+                                        val start = if (initialDragIndex >= 0) initialDragIndex else currentIndex
+                                        val minIdx = minOf(start, currentIndex)
+                                        val maxIdx = maxOf(start, currentIndex)
+                                        val idsToUpdate = (minIdx..maxIdx).mapNotNull { idx ->
+                                            if (idx in currentSongs.indices) currentSongs[idx].id else null
+                                        }
+                                        setMultipleSongsSelected(idsToUpdate, willSelect)
+                                    }
+                                }
+                            },
+                            onDragEnd = {
+                                dragSelectMode = null
+                                initialDragIndex = -1
+                            },
+                            onDragCancel = {
+                                dragSelectMode = null
+                                initialDragIndex = -1
+                            }
+                        )
+                    }
             ) {
                 // Header Card
                 item {
@@ -338,7 +491,18 @@ fun PlaylistDetailScreen(
                                     song = song,
                                     index = index + 1,
                                     isCurrentPlaying = currentSong?.id == song.id,
-                                    onClick = { PlaybackManager.playSong(song, songs) },
+                                    isSelectionMode = isSelectionMode,
+                                    isSelected = selectedSongIds.contains(song.id),
+                                    onClick = {
+                                        if (isSelectionMode) {
+                                            toggleSelection(song.id)
+                                        } else {
+                                            PlaybackManager.playSong(song, songs)
+                                        }
+                                    },
+                                    onLongClick = {
+                                        toggleSelection(song.id)
+                                    },
                                     onToggleFavorite = {
                                         coroutineScope.launch {
                                             repository.toggleFavorite(song.id)

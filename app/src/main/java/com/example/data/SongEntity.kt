@@ -23,6 +23,7 @@ data class SongEntity(
     
     // Soft-hide engine: When true, song is hidden from general library screens
     // but remains preserved and playable within designated playlists.
+    val isHidden: Boolean = false,
     val isHiddenFromLibrary: Boolean = false,
     
     // Linguistic script categorization

@@ -139,12 +139,26 @@ fun SyncedLyricsView(
         ActivityResultContracts.GetContent()
     ) { uri ->
         if (uri != null) {
-            try {
-                val content = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
-                if (!content.isNullOrBlank()) {
-                    onSaveCustomLyrics(content)
+            coroutineScope.launch {
+                try {
+                    val content = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                    }
+                    if (!content.isNullOrBlank()) {
+                        onSaveCustomLyrics(content)
+                        if (song != null) {
+                            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                com.example.PulseMusicApp.instance.repository.saveCustomLyrics(song.id, content, source = "IMPORT")
+                            }
+                        }
+                        android.widget.Toast.makeText(context, "Imported and saved .LRC lyrics", android.widget.Toast.LENGTH_SHORT).show()
+                    } else {
+                        android.widget.Toast.makeText(context, "Selected .LRC file is empty", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                } catch (e: Exception) {
+                    android.widget.Toast.makeText(context, "Failed to read .LRC file: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
                 }
-            } catch (_: Exception) {}
+            }
         }
     }
 

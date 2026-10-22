@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -64,6 +65,17 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.File
 
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.style.TextOverflow
+import com.example.utils.CachedSongArtwork
+import com.example.ui.theme.OneUISurfaceDark
+import kotlin.math.sin
+import kotlin.math.abs
+
 /**
  * Isolated Native Audio Trimmer Dialog.
  * Uses a dedicated, isolated secondary ExoPlayer instance targeting only
@@ -90,6 +102,15 @@ fun AudioEditorDialog(
     var statusMessage by remember { mutableStateOf<String?>(null) }
     var isPreviewPlaying by remember { mutableStateOf(false) }
     var previewPositionMs by remember { mutableFloatStateOf(0f) }
+
+    // Precompute simulated waveform bars (50 bars across the song)
+    val waveformBars = remember(song.id, song.title) {
+        val seed = song.id.hashCode() xor song.title.hashCode()
+        (0 until 48).map { i ->
+            val v = abs(sin(i * 0.45 + (seed % 100) * 0.1) * 0.6 + sin(i * 1.3) * 0.4).toFloat().coerceIn(0.15f, 1.0f)
+            v
+        }
+    }
 
     // Dedicated, isolated secondary ExoPlayer strictly for snippet preview
     val previewPlayer = remember(context) {
@@ -161,36 +182,147 @@ fun AudioEditorDialog(
                         modifier = Modifier.padding(end = 8.dp)
                     )
                     Text(
-                        text = "Native Lossless Audio Cutter",
+                        text = "Native Audio Trimmer",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         color = OneUITextPrimary
                     )
                 }
 
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "${song.title} (${formatTime(song.durationMs)})",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = OneUITextSecondary
-                )
+                Spacer(modifier = Modifier.height(12.dp))
 
-                Spacer(modifier = Modifier.height(18.dp))
+                // Track Metadata Header Card
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(OneUISurfaceDark)
+                        .padding(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    CachedSongArtwork(
+                        song = song,
+                        modifier = Modifier.size(46.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        placeholderIconSize = 22.dp
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = song.title,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = OneUITextPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = "${song.artist} • ${song.album}",
+                            fontSize = 11.sp,
+                            color = OneUITextSecondary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = "Total Duration: ${formatTime(song.durationMs)} (${song.durationMs} ms)",
+                            fontSize = 10.sp,
+                            color = NeonMint
+                        )
+                    }
+                }
 
-                // Time markers
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // Audio Waveform Visualizer Canvas
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(64.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(OneUISurfaceDark)
+                        .padding(horizontal = 8.dp, vertical = 6.dp)
+                ) {
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        val numBars = waveformBars.size
+                        val barSpacing = 3.dp.toPx()
+                        val totalSpacing = barSpacing * (numBars - 1)
+                        val barWidth = ((size.width - totalSpacing) / numBars).coerceAtLeast(2.dp.toPx())
+                        val maxHeight = size.height
+
+                        val startRatio = (startMs / totalDurationMs).coerceIn(0f, 1f)
+                        val endRatio = (endMs / totalDurationMs).coerceIn(0f, 1f)
+                        val previewRatio = if (isPreviewPlaying) (previewPositionMs / totalDurationMs).coerceIn(0f, 1f) else -1f
+
+                        waveformBars.forEachIndexed { i, barAmplitude ->
+                            val barRatio = i.toFloat() / (numBars - 1).coerceAtLeast(1)
+                            val isInsideCut = barRatio in startRatio..endRatio
+                            val barHeight = (maxHeight * barAmplitude).coerceAtLeast(4.dp.toPx())
+                            val x = i * (barWidth + barSpacing)
+                            val y = (maxHeight - barHeight) / 2f
+
+                            val barColor = if (isInsideCut) {
+                                SpotifyGreen
+                            } else {
+                                Color(0xFF4A4A4A)
+                            }
+
+                            drawRoundRect(
+                                color = barColor,
+                                topLeft = Offset(x, y),
+                                size = Size(barWidth, barHeight),
+                                cornerRadius = CornerRadius(barWidth / 2, barWidth / 2)
+                            )
+                        }
+
+                        // Playback cursor inside preview
+                        if (previewRatio >= 0f) {
+                            val cursorX = previewRatio * size.width
+                            drawLine(
+                                color = NeonMint,
+                                start = Offset(cursorX, 0f),
+                                end = Offset(cursorX, maxHeight),
+                                strokeWidth = 2.5.dp.toPx()
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Exact Millisecond Details
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Column {
-                        Text("Start: ${formatTime(startMs.toLong())}", color = NeonMint, fontWeight = FontWeight.Bold)
+                        Text(
+                            text = "Start: ${formatTime(startMs.toLong())}",
+                            color = NeonMint,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp
+                        )
+                        Text(
+                            text = "${startMs.toLong()} ms",
+                            color = OneUITextSecondary,
+                            fontSize = 10.sp
+                        )
                     }
                     Column(horizontalAlignment = Alignment.End) {
-                        Text("End: ${formatTime(endMs.toLong())}", color = SpotifyGreen, fontWeight = FontWeight.Bold)
+                        Text(
+                            text = "End: ${formatTime(endMs.toLong())}",
+                            color = SpotifyGreen,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp
+                        )
+                        Text(
+                            text = "${endMs.toLong()} ms",
+                            color = OneUITextSecondary,
+                            fontSize = 10.sp
+                        )
                     }
                 }
 
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(4.dp))
 
                 RangeSlider(
                     value = startMs..endMs,
@@ -217,14 +349,14 @@ fun AudioEditorDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Clip Duration: ${formatTime((endMs - startMs).toLong())}",
+                        text = "Clip: ${formatTime((endMs - startMs).toLong())} (${(endMs - startMs).toLong()} ms)",
                         style = MaterialTheme.typography.bodySmall,
-                        color = Color.White.copy(alpha = 0.8f)
+                        color = Color.White.copy(alpha = 0.9f)
                     )
 
                     if (isPreviewPlaying) {
                         Text(
-                            text = "Playing: ${formatTime(previewPositionMs.toLong())}",
+                            text = "Playing: ${formatTime(previewPositionMs.toLong())} (${previewPositionMs.toLong()} ms)",
                             color = NeonMint,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold

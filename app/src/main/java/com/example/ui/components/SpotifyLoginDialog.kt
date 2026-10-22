@@ -532,8 +532,17 @@ fun SpotifyLoginDialog(
                                             }
                                         }
                                     }
+                                    val settingsManager = com.example.PulseMusicApp.instance.settingsManager
+                                    val customClientId = settingsManager.spotifyClientId.value.trim()
+                                    val customRedirectUri = settingsManager.spotifyRedirectUri.value.trim().ifBlank { "https://localhost:8888/callback" }
 
-                                    loadUrl("https://accounts.spotify.com/en/login")
+                                    val targetLoginUrl = if (customClientId.isNotBlank()) {
+                                        val scopes = "user-library-read playlist-read-private playlist-read-collaborative user-top-read"
+                                        "https://accounts.spotify.com/authorize?client_id=${Uri.encode(customClientId)}&response_type=token&redirect_uri=${Uri.encode(customRedirectUri)}&scope=${Uri.encode(scopes)}&show_dialog=true"
+                                    } else {
+                                        "https://accounts.spotify.com/en/login"
+                                    }
+                                    loadUrl(targetLoginUrl)
                                 }
                             },
                             modifier = Modifier.fillMaxSize()

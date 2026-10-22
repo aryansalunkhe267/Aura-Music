@@ -82,20 +82,37 @@ object StreamingApiClient {
 
     /**
      * Searches YouTube natively using NewPipeExtractor without any external Piped instances.
+     * Enhances search relevance by appending "song" or "audio" under the hood and
+     * explicitly filtering out results longer than 10 minutes (600s).
      */
     suspend fun searchSongs(query: String): List<SongEntity> = withContext(Dispatchers.IO) {
         ensureInit()
         val results = mutableListOf<SongEntity>()
         try {
-            val searchExtractor = ServiceList.YouTube.getSearchExtractor(query)
+            val qLower = query.lowercase().trim()
+            val sanitizedQuery = if (
+                !qLower.contains("song") && !qLower.contains("audio") &&
+                !qLower.contains("music") && !qLower.contains("track")
+            ) {
+                "${query.trim()} song"
+            } else {
+                query.trim()
+            }
+
+            val searchExtractor = ServiceList.YouTube.getSearchExtractor(sanitizedQuery)
             searchExtractor.fetchPage()
 
             val items = searchExtractor.initialPage?.items ?: emptyList()
             for (item in items) {
                 if (item is StreamInfoItem) {
+                    val durSec = if (item.duration > 0) item.duration else 180L
+                    // Explicitly filter out raw podcasts/videos longer than 10 minutes (600s) or shorter than 20s
+                    if (durSec > 600L || (item.duration > 0 && durSec < 20L)) {
+                        continue
+                    }
+
                     val videoId = extractStreamId(item.url)
                     val numericId = (videoId.hashCode().toLong() and 0x7FFFFFFF) + 6_000_000L
-                    val durSec = if (item.duration > 0) item.duration else 180L
                     val bestThumb = item.thumbnails.maxByOrNull { it.width }?.url
                         ?: item.thumbnails.firstOrNull()?.url
 
@@ -113,7 +130,7 @@ object StreamingApiClient {
                             sourceType = "ONLINE",
                             isDownloaded = false,
                             downloadProgress = 0,
-                            languageScript = "UNKNOWN",
+                            languageScript = inferLanguage(item.name ?: "", item.uploaderName ?: ""),
                             genre = "Direct Stream"
                         )
                     )
@@ -123,6 +140,19 @@ object StreamingApiClient {
             Log.e(TAG, "NewPipeExtractor native search failed for '$query': ${e.message}", e)
         }
         return@withContext results
+    }
+
+    suspend fun fetchTrendingPunjabiCharts(): List<SongEntity> = searchSongs("trending punjabi songs")
+    suspend fun fetchTrendingHindiCharts(): List<SongEntity> = searchSongs("trending hindi bollywood songs")
+    suspend fun fetchTrendingMarathiCharts(): List<SongEntity> = searchSongs("trending marathi songs")
+
+    private fun inferLanguage(title: String, artist: String): String {
+        val combined = "$title $artist".lowercase()
+        return when {
+            combined.any { it.code in 0x0A00..0x0A7F } || combined.contains("punjabi") || combined.contains("sidhu") || combined.contains("diljit") || combined.contains("aujla") -> "PUNJABI"
+            combined.any { it.code in 0x0900..0x097F } || combined.contains("marathi") -> "MARATHI"
+            else -> "HINDI"
+        }
     }
 
     /**

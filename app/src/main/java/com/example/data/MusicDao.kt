@@ -15,7 +15,7 @@ interface MusicDao {
     suspend fun deleteSongById(songId: Long)
 
     // Main library query: Soft-hidden tracks are omitted from general view
-    @Query("SELECT * FROM songs WHERE isHiddenFromLibrary = 0 ORDER BY title COLLATE NOCASE ASC")
+    @Query("SELECT * FROM songs WHERE isHidden = 0 AND isHiddenFromLibrary = 0 ORDER BY title COLLATE NOCASE ASC")
     fun getLibrarySongs(): Flow<List<SongEntity>>
 
     // Query for all songs regardless of soft-hide state (for scanning & queue algorithms)
@@ -26,18 +26,18 @@ interface MusicDao {
     suspend fun getSongById(id: Long): SongEntity?
 
     // Dedicated query for softly-hidden songs (kept exclusively in playlists or hidden vault)
-    @Query("SELECT * FROM songs WHERE isHiddenFromLibrary = 1 ORDER BY title COLLATE NOCASE ASC")
+    @Query("SELECT * FROM songs WHERE isHidden = 1 OR isHiddenFromLibrary = 1 ORDER BY title COLLATE NOCASE ASC")
     fun getHiddenVaultSongs(): Flow<List<SongEntity>>
 
     // Language script queries (Punjabi / Hindi / Marathi)
-    @Query("SELECT * FROM songs WHERE languageScript = :script AND isHiddenFromLibrary = 0 ORDER BY title COLLATE NOCASE ASC")
+    @Query("SELECT * FROM songs WHERE languageScript = :script AND isHidden = 0 AND isHiddenFromLibrary = 0 ORDER BY title COLLATE NOCASE ASC")
     fun getSongsByScript(script: String): Flow<List<SongEntity>>
 
     // Mood-based queries for smart recommendation engine
     @Query("SELECT * FROM songs WHERE moodProfile = :mood ORDER BY moodScore DESC")
     suspend fun getSongsByMoodDirect(mood: String): List<SongEntity>
 
-    @Query("SELECT * FROM songs WHERE moodProfile = :mood AND isHiddenFromLibrary = 0 ORDER BY moodScore DESC")
+    @Query("SELECT * FROM songs WHERE moodProfile = :mood AND isHidden = 0 AND isHiddenFromLibrary = 0 ORDER BY moodScore DESC")
     fun getSongsByMoodFlow(mood: String): Flow<List<SongEntity>>
 
     // Insert or update
@@ -51,7 +51,7 @@ interface MusicDao {
     suspend fun updateSong(song: SongEntity)
 
     // Soft-hide toggle engine
-    @Query("UPDATE songs SET isHiddenFromLibrary = :isHidden WHERE id = :songId")
+    @Query("UPDATE songs SET isHidden = :isHidden, isHiddenFromLibrary = :isHidden WHERE id = :songId")
     suspend fun setSongHidden(songId: Long, isHidden: Boolean)
 
     // Update synchronized .lrc lyrics
@@ -79,7 +79,7 @@ interface MusicDao {
     @Query("UPDATE songs SET coverArtUrl = :coverArtUrl, albumArtUri = :coverArtUrl WHERE id = :songId")
     suspend fun updateCoverArt(songId: Long, coverArtUrl: String)
 
-    @Query("SELECT * FROM songs WHERE isFavorite = 1 AND isHiddenFromLibrary = 0 ORDER BY title COLLATE NOCASE ASC")
+    @Query("SELECT * FROM songs WHERE isFavorite = 1 AND isHidden = 0 AND isHiddenFromLibrary = 0 ORDER BY title COLLATE NOCASE ASC")
     fun getFavoriteSongs(): Flow<List<SongEntity>>
 
     // Online Metadata & Synced Lyrics Enrichment

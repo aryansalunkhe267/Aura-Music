@@ -38,6 +38,8 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
@@ -85,6 +87,12 @@ fun SettingsScreen(
     val bitrate by settingsManager.bitrate.collectAsStateWithLifecycle()
     val crossfade by settingsManager.crossfadeSeconds.collectAsStateWithLifecycle()
     val wifiOnly by settingsManager.downloadOverWifiOnly.collectAsStateWithLifecycle()
+
+    val currentSpotifyClientId by settingsManager.spotifyClientId.collectAsStateWithLifecycle()
+    val currentSpotifyRedirectUri by settingsManager.spotifyRedirectUri.collectAsStateWithLifecycle()
+
+    var inputClientId by remember(currentSpotifyClientId) { mutableStateOf(currentSpotifyClientId) }
+    var inputRedirectUri by remember(currentSpotifyRedirectUri) { mutableStateOf(currentSpotifyRedirectUri) }
 
     var cacheSize by remember { mutableStateOf(settingsManager.calculateCacheSizeMb()) }
 
@@ -355,16 +363,120 @@ fun SettingsScreen(
                         }
                         TextButton(
                             onClick = {
-                                settingsManager.clearCache()
-                                cacheSize = settingsManager.calculateCacheSizeMb()
-                                Toast.makeText(context, "Cache cleared", Toast.LENGTH_SHORT).show()
+                                 settingsManager.clearCache()
+                                 cacheSize = settingsManager.calculateCacheSizeMb()
+                                 Toast.makeText(context, "Cache cleared", Toast.LENGTH_SHORT).show()
                             }
                         ) {
-                            Text("Clear ($cacheSize)", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                            Text("Clear ($cacheSize)", color = Color(0xFF39FF14), fontWeight = FontWeight.Bold)
                         }
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        // Section 4: Spotify Developer API Credentials (HTTP 403 & OAuth Fix)
+        Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(24.dp)
+                        .background(Color(0xFF1DB954), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("♫", color = Color.Black, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                }
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = "Spotify Developer Credentials",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = OneUITextPrimary
+                )
+            }
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = "Fixes HTTP 403 errors when Spotify restricts shared apps. Provide your own Spotify App Client ID and Redirect URI from developer.spotify.com.",
+                fontSize = 12.sp,
+                color = OneUITextSecondary
+            )
+            Spacer(Modifier.height(12.dp))
+
+            Card(
+                shape = RoundedCornerShape(18.dp),
+                colors = CardDefaults.cardColors(containerColor = OneUICardElevated),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "Spotify Client ID",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = OneUITextPrimary
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    OutlinedTextField(
+                        value = inputClientId,
+                        onValueChange = { inputClientId = it },
+                        placeholder = { Text("e.g. 5f8a2b...", fontSize = 13.sp) },
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedContainerColor = OneUISurfaceDark,
+                            unfocusedContainerColor = OneUISurfaceDark,
+                            focusedBorderColor = Color(0xFF1DB954),
+                            unfocusedBorderColor = Color.Transparent,
+                            focusedTextColor = OneUITextPrimary,
+                            unfocusedTextColor = OneUITextPrimary
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Spacer(Modifier.height(14.dp))
+
+                    Text(
+                        text = "Spotify Redirect URI",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = OneUITextPrimary
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    OutlinedTextField(
+                        value = inputRedirectUri,
+                        onValueChange = { inputRedirectUri = it },
+                        placeholder = { Text("pulsemusic://callback", fontSize = 13.sp) },
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedContainerColor = OneUISurfaceDark,
+                            unfocusedContainerColor = OneUISurfaceDark,
+                            focusedBorderColor = Color(0xFF1DB954),
+                            unfocusedBorderColor = Color.Transparent,
+                            focusedTextColor = OneUITextPrimary,
+                            unfocusedTextColor = OneUITextPrimary
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Spacer(Modifier.height(16.dp))
+
+                    Button(
+                        onClick = {
+                            settingsManager.setSpotifyClientId(inputClientId)
+                            settingsManager.setSpotifyRedirectUri(inputRedirectUri)
+                            Toast.makeText(context, "Saved Spotify Credentials", Toast.LENGTH_SHORT).show()
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1DB954)),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Save Credentials", color = Color.Black, fontWeight = FontWeight.Bold)
                     }
                 }
             }
         }
     }
 }
+

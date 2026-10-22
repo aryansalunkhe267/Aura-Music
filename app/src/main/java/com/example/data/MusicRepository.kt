@@ -52,8 +52,8 @@ class MusicRepository(
         musicDao.deleteSongById(songId)
     }
 
-    suspend fun updateLyrics(songId: Long, lyrics: String) {
-        musicDao.updateLyrics(songId, lyrics)
+    suspend fun updateLyrics(songId: Long, lyrics: String) = withContext(Dispatchers.IO) {
+        saveCustomLyrics(songId, lyrics, source = "MANUAL")
     }
 
     suspend fun createPlaylist(name: String, description: String = "", type: String = "USER"): Long {
@@ -260,6 +260,7 @@ class MusicRepository(
 
             val base = if (existing != null) {
                 scanned.copy(
+                    isHidden = existing.isHidden,
                     isHiddenFromLibrary = existing.isHiddenFromLibrary,
                     isFavorite = existing.isFavorite,
                     coverArtUrl = scanned.coverArtUrl ?: existing.coverArtUrl,

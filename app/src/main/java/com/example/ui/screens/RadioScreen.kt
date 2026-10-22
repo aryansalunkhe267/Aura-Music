@@ -22,6 +22,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.PlayArrow
@@ -35,6 +36,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -42,6 +44,8 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.window.Dialog
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -95,6 +99,11 @@ fun RadioScreen(
     var recordingStationId by remember { mutableStateOf<String?>(null) }
     var recordingElapsedSec by remember { mutableIntStateOf(0) }
 
+    // Custom Radio Stream Input Dialog
+    var showCustomStreamDialog by remember { mutableStateOf(false) }
+    var customStationName by remember { mutableStateOf("") }
+    var customStreamUrl by remember { mutableStateOf("") }
+
     val currentPlayingSong by PlaybackManager.currentSong.collectAsStateWithLifecycle()
 
     fun loadStations(query: String = searchQuery) {
@@ -127,12 +136,15 @@ fun RadioScreen(
         }
     }
 
-    Column(
+    Box(
         modifier = modifier
             .fillMaxSize()
             .background(OneUIDarkBackground)
             .testTag("radio_screen")
     ) {
+        Column(
+            modifier = Modifier.fillMaxSize()
+        ) {
         // Header
         Column(
             modifier = Modifier
@@ -451,4 +463,120 @@ fun RadioScreen(
             }
         }
     }
+
+    // Floating Action Button to enter custom radio stream URL
+    FloatingActionButton(
+        onClick = { showCustomStreamDialog = true },
+        containerColor = MaterialTheme.colorScheme.primary,
+        contentColor = Color.Black,
+        shape = CircleShape,
+        modifier = Modifier
+            .align(Alignment.BottomEnd)
+            .padding(end = 20.dp, bottom = 125.dp)
+            .size(56.dp)
+            .testTag("custom_radio_stream_fab")
+    ) {
+        Icon(Icons.Default.Add, contentDescription = "Add Custom Radio Stream", modifier = Modifier.size(28.dp))
+    }
+
+    // Custom Radio Stream Dialog
+    if (showCustomStreamDialog) {
+        Dialog(onDismissRequest = { showCustomStreamDialog = false }) {
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = OneUICardElevated,
+                modifier = Modifier.fillMaxWidth().testTag("custom_stream_dialog")
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(20.dp)
+                ) {
+                    Text(
+                        text = "Add Custom Radio Stream",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = OneUITextPrimary
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "Type or paste an internet radio stream URL (MP3, AAC, HLS / M3U8, Icecast).",
+                        fontSize = 12.sp,
+                        color = OneUITextSecondary
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    OutlinedTextField(
+                        value = customStationName,
+                        onValueChange = { customStationName = it },
+                        placeholder = { Text("Station Name (e.g. My Favorite FM)", fontSize = 13.sp) },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = OneUITextPrimary,
+                            unfocusedTextColor = OneUITextPrimary,
+                            focusedBorderColor = MaterialTheme.colorScheme.primary
+                        ),
+                        modifier = Modifier.fillMaxWidth().testTag("custom_station_name_input")
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    OutlinedTextField(
+                        value = customStreamUrl,
+                        onValueChange = { customStreamUrl = it },
+                        placeholder = { Text("Stream URL (https://...)", fontSize = 13.sp) },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = OneUITextPrimary,
+                            unfocusedTextColor = OneUITextPrimary,
+                            focusedBorderColor = MaterialTheme.colorScheme.primary
+                        ),
+                        modifier = Modifier.fillMaxWidth().testTag("custom_station_url_input")
+                    )
+
+                    Spacer(modifier = Modifier.height(20.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        TextButton(onClick = { showCustomStreamDialog = false }) {
+                            Text("Cancel", color = OneUITextSecondary)
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                val url = customStreamUrl.trim()
+                                if (url.startsWith("http://", ignoreCase = true) || url.startsWith("https://", ignoreCase = true)) {
+                                    val customItem = RadioStationItem(
+                                        id = "custom_${System.currentTimeMillis()}",
+                                        name = customStationName.trim().ifBlank { "Custom Radio Stream" },
+                                        streamUrl = url,
+                                        country = "Custom",
+                                        language = "Internet",
+                                        codec = "Stream",
+                                        bitrate = 128
+                                    )
+                                    stations = listOf(customItem) + stations
+                                    PlaybackManager.playRadioStation(customItem)
+                                    Toast.makeText(context, "Streaming: ${customItem.name}", Toast.LENGTH_SHORT).show()
+                                    showCustomStreamDialog = false
+                                    customStationName = ""
+                                    customStreamUrl = ""
+                                } else {
+                                    Toast.makeText(context, "Please enter a valid http/https stream URL", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.testTag("play_custom_stream_btn")
+                        ) {
+                            Text("Play Stream", color = Color.Black, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 }

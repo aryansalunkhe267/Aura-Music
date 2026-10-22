@@ -75,6 +75,24 @@ enum class AppThemePreset(
         0xFF1DB954,
         0xFF00F5D4,
         0xFFFFFFFF
+    ),
+    ELECTRIC_BLUE(
+        "Electric Blue & Cyber Grey",
+        0xFF080B10,
+        0xFF101622,
+        0xFF182234,
+        0xFF0070F3,
+        0xFF00DFD8,
+        0xFFFFFFFF
+    ),
+    SUNSET_ORANGE(
+        "Sunset Orange & Deep Obsidian",
+        0xFF0C0908,
+        0xFF181210,
+        0xFF241C18,
+        0xFFFF5722,
+        0xFFFF9800,
+        0xFFFFFFFF
     )
 }
 
@@ -94,6 +112,8 @@ class SettingsManager(private val context: Context) {
         val KEY_WALLPAPER_URI = stringPreferencesKey("wallpaper_uri")
         val KEY_WALLPAPER_SCRIM = floatPreferencesKey("wallpaper_scrim_alpha")
         val KEY_PLAYER_STYLE = stringPreferencesKey("player_style")
+        val KEY_SPOTIFY_CLIENT_ID = stringPreferencesKey("spotify_client_id")
+        val KEY_SPOTIFY_REDIRECT_URI = stringPreferencesKey("spotify_redirect_uri")
     }
 
     // Audio & Playback
@@ -144,6 +164,15 @@ class SettingsManager(private val context: Context) {
     )
     val streamingInstanceUrl: StateFlow<String> = _streamingInstanceUrl.asStateFlow()
 
+    // Spotify Developer Personal Credentials (Overrides 403 Forbidden on custom apps)
+    private val _spotifyClientId = MutableStateFlow(prefs.getString("spotify_client_id", "") ?: "")
+    val spotifyClientId: StateFlow<String> = _spotifyClientId.asStateFlow()
+
+    private val _spotifyRedirectUri = MutableStateFlow(
+        prefs.getString("spotify_redirect_uri", "pulsemusic://callback") ?: "pulsemusic://callback"
+    )
+    val spotifyRedirectUri: StateFlow<String> = _spotifyRedirectUri.asStateFlow()
+
     init {
         // Read initial state from Jetpack DataStore asynchronously
         ioScope.launch {
@@ -159,6 +188,12 @@ class SettingsManager(private val context: Context) {
                 }
                 dataStorePrefs[KEY_WALLPAPER_SCRIM]?.let { scrim ->
                     _wallpaperScrimAlpha.value = scrim
+                }
+                dataStorePrefs[KEY_SPOTIFY_CLIENT_ID]?.let { id ->
+                    _spotifyClientId.value = id
+                }
+                dataStorePrefs[KEY_SPOTIFY_REDIRECT_URI]?.let { uri ->
+                    _spotifyRedirectUri.value = if (uri.isBlank()) "pulsemusic://callback" else uri
                 }
             } catch (_: Exception) {}
         }
@@ -241,6 +276,32 @@ class SettingsManager(private val context: Context) {
         }
         _visibleTabs.value = current
         prefs.edit().putStringSet("visible_tabs", current).apply()
+    }
+
+    fun setSpotifyClientId(clientId: String) {
+        val trimmed = clientId.trim()
+        _spotifyClientId.value = trimmed
+        prefs.edit().putString("spotify_client_id", trimmed).apply()
+        ioScope.launch {
+            try {
+                context.settingsDataStore.edit { ds ->
+                    ds[KEY_SPOTIFY_CLIENT_ID] = trimmed
+                }
+            } catch (_: Exception) {}
+        }
+    }
+
+    fun setSpotifyRedirectUri(redirectUri: String) {
+        val trimmed = redirectUri.trim()
+        _spotifyRedirectUri.value = trimmed
+        prefs.edit().putString("spotify_redirect_uri", trimmed).apply()
+        ioScope.launch {
+            try {
+                context.settingsDataStore.edit { ds ->
+                    ds[KEY_SPOTIFY_REDIRECT_URI] = trimmed
+                }
+            } catch (_: Exception) {}
+        }
     }
 
     fun setDownloadOverWifiOnly(enabled: Boolean) {
